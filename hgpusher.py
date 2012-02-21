@@ -260,10 +260,8 @@ def process_patchset(data):
         revision = get_revision(active_repo)
         shutil.rmtree(active_repo)
     except (HgUtilError, RETRY) as error:
-        msg = 'Could not apply and push patchset:\n%s' % (error)
-        log.error('[PatchSet] %s' % (msg))
         comment.append(msg)
-        log.debug('Comment "%s" to bug %s' % ('\n'.join(comment), data['bug_id']))
+        log.error('\n'.join(comment))
         return (False, '\n'.join(comment))
 
     # Successful push. Clear any errors that might be in the comments
