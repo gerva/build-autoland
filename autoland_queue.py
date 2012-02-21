@@ -192,16 +192,72 @@ def get_patchset(bug_id, try_run, user_patches=[], review_comment=True):
 
 def bz_search_handler():
     """
-    Search bugzilla whiteboards for Autoland jobs.
-    Search handler, for the moment, only supports push to try,
+    Query Bugzilla WebService API for Autoland flagged bugs.
+    For the moment, only supports push to try,
     and then to branch. It cannot push directly to branch.
     """
     bugs = []
     try:
-        bugs = bz.get_matching_bugs('whiteboard', '\[autoland.*\]')
+        bugs = bz.get_autoland_bugs()
     except (urllib2.HTTPError,urllib2.URLError), e:
-        log.error("Error while polling bugzilla: %s" % (e))
+        log.error('Error while querying WebService API: %s' % (e))
         return
+
+    for bug in bugs:
+        id = bug.get('bug_id')
+
+        # Grab the branches as a list, do a bit of cleaning
+        branches = bug.get('branches', 'try').split(',')
+        branches = map(lambda x: x.strip(), branches)
+        branches = filter(lambda y: y != '', branches)
+
+        for branch in branches:
+            # clean out any invalid branch names
+            # job will still land to any correct branches
+            b = db.BranchQuery(Branch(name=branch))
+            if b == None:
+                branches.remove(branch)
+                log.info('Branch %s does not exist.' % (branch))
+            elif b.status != 'enabled':
+                branches.remove(branch)
+                log.info('Branch %s is not enabled.' % (branch))
+        if not branches:
+            log.info('Bug %d had no correct branches flagged' % (id))
+            continue
+
+        # patches are taken from the 'attachments' element of bug
+        # the only patches that should be taken are the patches with status
+        # 'waiting'
+        patch_group = bug.get('attachments', None)
+        # take only waiting patches
+        patch_group = filter(lambda x: x['status'] == 'waiting', patch_group)
+
+        # XXX XXX: Should only patches with 'who' the same be pulled into the
+        # single patch set? Or could be done by 'status_when'
+
+        # the only piece of data wanted is the attachment id
+        patch_group = map(lambda x: x['id'], patch_group)
+
+        ps = PatchSet()
+        # all runs will get a try_run by default for now
+        # XXX XXX: ps.try_syntax = None
+        ps.bug_id = id
+        ps.branch = ','.join(branches)  # branches have been filtered out
+        ps.patches = patch_group
+
+        if db.PatchSetQuery(ps) != None:
+            # we already have this in the db, don't add it.
+            log.debug('Duplicate patchset, removing whiteboard tag.')
+            # XXX: Need to update the bug
+            for patch in bug['attachments']:
+                bz.autoland_update_attachment(.....)
+            continue
+        # add try_run attribute here so that PatchSetQuery will match patchsets
+        # in any stage of their lifecycle
+        ps.try_run = 1
+
+        ps.author = ........
+        patchset_id = db.PatchSetInsert(ps)
 
     for (bug_id, whiteboard) in bugs:
         tag = get_first_autoland_tag(whiteboard)
