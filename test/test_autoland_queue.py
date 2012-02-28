@@ -9,7 +9,7 @@ from autoland_queue import get_first_autoland_tag, get_patches_from_tag,\
         get_branch_from_tag, get_reviews, get_patchset, bz_search_handler,\
         message_handler, DBHandler, PatchSet, bz_utils, config,\
         handle_patchset, get_try_syntax_from_tag, main,\
-        handle_comments, Comment
+        handle_comments, Comment, get_approvals
 from utils.db_handler import PatchSet
 
 TEST_DB = 'sqlite:///test/autoland.sqlite'
@@ -82,6 +82,29 @@ class TestAutolandQueue(unittest.TestCase):
         results = []
         for i in range(2):
             results.append(get_reviews(bug['attachments'][i]))
+            self.assertEqual(results[i], expected[i])
+
+    def testGetApprovals(self):
+        a_data = []
+        expected = []
+        a_data.append({'flags' : [
+            {'name':'approval-mozilla-beta',
+             'setter':{'name':'setbyme'},
+             'status':'+'},
+            {'name':'review'},
+            {'name':'approval-mozilla-esr10',
+             'setter':{'name':'setbyme'},
+             'status':'?'}
+            ]})
+        expected.append([{'type':'mozilla-beta',
+                          'approver':'setbyme',
+                          'result':'+'},
+                         {'type':'mozilla-esr10',
+                          'approver':'setbyme',
+                          'result':'?'}])
+        results = []
+        for i in range(len(a_data)):
+            results.append(get_approvals(a_data[i]))
             self.assertEqual(results[i], expected[i])
 
     def testGetPatchSet(self):

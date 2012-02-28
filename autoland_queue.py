@@ -100,6 +100,29 @@ def get_reviews(attachment):
                 break
     return reviews
 
+def get_approvals(attachment):
+    """
+    Takes attachment JSON, returns a list of approvals.
+    Each approval (in the list) is a dictionary containing:
+        - Approval type
+        - Approver
+        - Approval Result (+, -, ?)
+    """
+    print "Checking attachment"
+    print attachment
+    approvals = []
+    app_re = re.compile(r'approval-')
+    if not 'flags' in attachment:
+        print "no flags"
+        return approvals
+    for flag in attachment['flags']:
+        print "Flag: %s" % (flag)
+        if app_re.match(flag.get('name')):
+            approvals.append({'type': app_re.sub('', flag.get('name')),
+                              'approver':flag['setter']['name'],
+                              'result':flag['status']})
+    return approvals
+
 def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
     """
     If user_patches specified, only fetch the information on those specific
@@ -141,6 +164,7 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
     """
     patchset = []   # hold the final patchset information
     reviews = []    # hold the review information corresponding to each patch
+    approvals = []  # hold the approval information corresponding to each patch
 
     # grab the bug data
     bug_data = bz.request('bug/%s' % (bug_id))
@@ -157,8 +181,10 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                     continue
                 patch = { 'id' : user_patch,
                           'author' : bz.get_user_info(attachment['attacher']['name']),
-                          'reviews' : [] }
+                          'reviews' : [],
+                          'approvals' : [] }
                 reviews.append(get_reviews(attachment))
+                approvals.append(get_approvals(attachment))
                 patchset.append(patch)
                 # remove the patch from user_patches to check all listed
                 # patches were pulled
@@ -166,8 +192,11 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
         if len(user_patches) != 0:
             # not all requested patches could be picked up
             # XXX TODO - should we still push what patches _did get picked up?
-            log.debug('Autoland failure. Not all user_patches could be picked up from bug.')
-            post_comment(('Autoland Failure\nSpecified patches %s do not exist, or are not posted to this bug.' % (user_patches)), bug_id)
+            log.debug('Autoland failure. '
+                    'Not all user_patches could be picked up from bug.')
+            post_comment(('Autoland Failure\n'
+                'Specified patches %s do not exist, '
+                'or are not posted to this bug.' % (user_patches)), bug_id)
             return None
     else:
         # no user-specified patches, grab them in the order they were posted.
@@ -177,12 +206,15 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                 continue
             patch = { 'id' : attachment['id'],
                       'author' : bz.get_user_info(attachment['attacher']['name']),
-                      'reviews' : [] }
+                      'reviews' : [],
+                      'approvals' : []}
             reviews.append(get_reviews(attachment))
+            approvals.append(get_approvals(attachment))
             patchset.append(patch)
 
     # check the reviews, based on try, etc, etc.
-    for patch, revs in zip(patchset, reviews):
+    for patch, revs, apps in zip(patchset, reviews, approvals):
+        patch['approvals'] = apps
         if try_run:
             # on a try run, take all non-obsolete patches
             patch['reviews'] = revs
@@ -226,20 +258,6 @@ def bz_search_handler():
             # Strange that it showed up if None
             continue
 
-        # get the branches
-        branches = get_branch_from_tag(tag)
-        print "Getting branches: %s" % branches
-        for branch in branches:
-            # clean out any invalid branch names
-            # job will still land to any correct branches
-            if db.BranchQuery(Branch(name=branch)) == None:
-                branches.remove(branch)
-                log.error('Branch %s does not exist.' % (branch))
-
-        # If there are no correct or permissive branches, go to next bug
-        if not branches:
-            continue
-
         log.debug('Found and processing tag %s' % (tag))
         # get the explicitly listed patches, if any
         patch_group = get_patches_from_tag(tag) if not None else []
@@ -250,7 +268,6 @@ def bz_search_handler():
         ps = PatchSet()
         # all runs will get a try_run by default for now
         ps.try_syntax = try_syntax
-        ps.branch = ','.join(branches)
         ps.patches = patch_group
         ps.bug_id = bug_id
 
@@ -259,11 +276,33 @@ def bz_search_handler():
                                ps.patchList(), review_comment=False)
         if patches == None:
             # do not have patches to push, kick it out of the queue
-            bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']', '\]'), bug_id)
-            log.error('No valid patches attached, nothing for Autoland to do here, removing this bug from the queue.')
+            bz.remove_whiteboard_tag(
+                    tag.replace('[', '\[').replace(']', '\]'),bug_id)
+            log.error('No valid patches attached, nothing for Autoland '
+                      'to do here, removing this bug from the queue.')
             continue
         ps.author = patches[0]['author']['email']
         ps.patches = ','.join(map(lambda x: str(x['id']), patches))
+
+        # get the branches
+        branches = get_branch_from_tag(tag)
+        print "Getting branches: %s" % branches
+        for branch in branches:
+            # clean out any invalid branch names
+            # job will still land to any correct branches
+            db_branch = db.BranchQuery(Branch(name=branch))
+            if db_branch == None:
+                branches.remove(branch)
+                log.error('Branch %s does not exist.' % (branch))
+            # check if approval granted on branch push.
+            if db_branch.approval_required:
+                ...
+
+        # If there are no correct or permissive branches, go to next bug
+        if not branches:
+            continue
+
+        ps.branch = ','.join(branches)
 
         if db.PatchSetQuery(ps) != None:
             # we already have this in the db, don't add it.

@@ -9,6 +9,8 @@ CREATE TABLE `branches` (
   `repo_url` text,
   `threshold` int(11) DEFAULT NULL,
   `status` text,
+  `push_to_closed` INTEGER,
+  `approval_required` INTEGER,
   UNIQUE(`name`)
 ) ;
 --

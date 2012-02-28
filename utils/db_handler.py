@@ -413,12 +413,15 @@ class DBHandler(object):
 
 class Branch(object):
     def __init__(self, id=False, name=False, repo_url=False,
-            threshold=False, status=False):
+            threshold=False, status=False, push_to_closed=False,
+            approval_required=False):
         self.id = id
         self.name = str(name) if name else name
         self.repo_url = str(repo_url) if repo_url else repo_url
         self.threshold = threshold
         self.status = str(status) if status else status
+        self.push_to_closed = push_to_closed
+        self.approval_required = approval_required
 
     def __repr__(self):
         return str(self.toDict())
@@ -436,6 +439,8 @@ class Branch(object):
         if self.repo_url != False: d['repo_url'] = self.repo_url
         if not isinstance(self.threshold, bool): d['threshold'] = self.threshold
         if self.status != False: d['status'] = self.status
+        d['push_to_closed'] = self.push_to_closed
+        d['approval_required'] = self.approval_required
         return d
 
 class PatchSet(object):
