@@ -123,6 +123,32 @@ def get_approvals(attachment):
                               'result':flag['status']})
     return approvals
 
+def has_approval(patches, branch):
+    """
+    Returns True if the entire list of patches has approval flags for branch,
+    return False otherwise.
+    """
+    if len(patches) == 0:
+        return False
+    for patch in patches:
+        approved = False
+        for app in patch['approvals']:
+            if app['type'] == branch:
+                if app['result'] == '+':
+                    # Found an approval, but keep on looking in
+                    # case there is a non-approval.
+                    # This isn't likely, but better to be sure.
+                    approved = True
+                else:
+                    # If we hit a non-approval, don't keep on
+                    # looking.
+                    approved = False
+                    break
+        if not approved:
+            # this patch wasn't approved on the current branch
+            return False
+    return True
+
 def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
     """
     If user_patches specified, only fetch the information on those specific
@@ -151,9 +177,15 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
               'author' : { 'name' : 'Name',
                            'email' : 'me@email.com' },
               'reviews' : [
-                    { 'reviewer' : { 'name' : 'Rev. Name',
-                                     'email' : 'rev@email.com' },
+                    { 'reviewer' : 'email',
                       'type' : 'superreview',
+                      'result' : '+'
+                    },
+                    { ... }
+                ],
+              'approvals' : [
+                    { 'approver' : 'email',
+                      'type' : 'mozilla-beta',
                       'result' : '+'
                     },
                     { ... }
@@ -295,9 +327,9 @@ def bz_search_handler():
                 branches.remove(branch)
                 log.error('Branch %s does not exist.' % (branch))
             # check if approval granted on branch push.
-            if db_branch.approval_required:
-                ...
 
+            if db_branch.approval_required and not has_approval(patches, branch):
+                    branches.remove(branch)
         # If there are no correct or permissive branches, go to next bug
         if not branches:
             continue
