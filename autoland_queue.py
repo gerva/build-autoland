@@ -205,8 +205,8 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
 
     if user_patches:
         # user-specified patches, need to pull them in that set order
-        user_patches = list(user_patches)    # take a local copy, passed by ref
-        for user_patch in list(user_patches):
+        user_patches = tuple(user_patches)    # take a local copy, passed by ref
+        for user_patch in tuple(user_patches):
             for attachment in bug_data['attachments']:
                 if attachment['id'] != user_patch or not attachment['is_patch'] \
                         or attachment['is_obsolete']:
@@ -319,7 +319,7 @@ def bz_search_handler():
         # get the branches
         branches = get_branch_from_tag(tag)
         print "Getting branches: %s" % branches
-        for branch in branches:
+        for branch in tuple(branches):
             # clean out any invalid branch names
             # job will still land to any correct branches
             db_branch = db.BranchQuery(Branch(name=branch))
@@ -340,7 +340,8 @@ def bz_search_handler():
             # we already have this in the db, don't add it.
             # Remove whiteboard tag, but don't add to db and don't comment.
             log.debug('Duplicate patchset, removing whiteboard tag.')
-            bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']','\]'), bug_id)
+            bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']','\]'),
+                bug_id)
             continue
 
         # add try_run attribute here so that PatchSetQuery will match patchsets
