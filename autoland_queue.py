@@ -21,7 +21,7 @@ LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
 config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
-BZ = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
+BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
 MQ = mq_utils.mq_util()

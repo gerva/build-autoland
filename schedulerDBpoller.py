@@ -49,7 +49,6 @@ class SchedulerDBPoller():
         # Set up bugzilla api connection
         self.bz_url = self.config.get('bz', 'url')
         self.bz = bz_utils.bz_util(self.config.get('bz', 'api_url'),
-                        self.config.get('bz', 'url'),
                         None, self.config.get('bz', 'username'),
                         self.config.get('bz', 'password'))
 
