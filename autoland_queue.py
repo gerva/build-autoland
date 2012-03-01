@@ -150,16 +150,16 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
 
     if user_patches:
         # user-specified patches, need to pull them in that set order
-        user_patches = list(user_patches)    # take a local copy, passed by ref
-        for user_patch in list(user_patches):
+        user_patches = list(user_patches)    # take a local copy, passed byref
+        for user_patch in tuple(user_patches):
             for attachment in bug_data['attachments']:
-                if attachment['id'] != user_patch \
-                        or not attachment['is_patch'] \
-                        or attachment['is_obsolete']:
+                if attachment['id'] != user_patch or \
+                        not attachment['is_patch'] or \
+                        attachment['is_obsolete']:
                     continue
                 patch = { 'id' : user_patch,
-                          'author' : bz.get_user_info(
-                              attachment['attacher']['name']),
+                          'author' :
+                              bz.get_user_info(attachment['attacher']['name']),
                           'reviews' : [] }
                 reviews.append(get_reviews(attachment))
                 patchset.append(patch)
@@ -182,8 +182,8 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                 # not a valid patch to be pulled
                 continue
             patch = { 'id' : attachment['id'],
-                      'author' : bz.get_user_info(
-                          attachment['attacher']['name']),
+                      'author' :
+                          bz.get_user_info(attachment['attacher']['name']),
                       'reviews' : [] }
             reviews.append(get_reviews(attachment))
             patchset.append(patch)
@@ -218,89 +218,74 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
 
 def bz_search_handler():
     """
-    Search bugzilla whiteboards for Autoland jobs.
-    Search handler, for the moment, only supports push to try,
+    Query Bugzilla WebService API for Autoland flagged bugs.
+    For the moment, only supports push to try,
     and then to branch. It cannot push directly to branch.
     """
     bugs = []
     try:
-        bugs = bz.get_matching_bugs('whiteboard', '\[autoland.*\]')
-    except (urllib2.HTTPError, urllib2.URLError), e:
-        log.error("Error while polling bugzilla: %s" % (e))
+        bugs = bz.autoland_get_bugs()
+    except (urllib2.HTTPError, urllib2.URLError), err:
+        log.error('Error while querying WebService API: %s' % (err))
         return
 
-    for (bug_id, whiteboard) in bugs:
-        tag = get_first_autoland_tag(whiteboard)
-        log.debug('Bug %s with tag %s' % (bug_id, tag))
+    for bug in bugs:
+        bug_id = bug.get('bug_id')
 
-        if tag == None or re.search('in-queue', tag) != None:
-            # Strange that it showed up if None
-            continue
+        # Grab the branches as a list, do a bit of cleaning
+        branches = bug.get('branches', 'try').split(',')
+        branches = [x.strip() for x in branches]
+        branches = [y for y in branches if y != '']
 
-        # get the branches
-        branches = get_branch_from_tag(tag)
-        log.debug('Flagged for landing on branches: %s' % (branches))
-        if not branches:
-            # this was probably flagged [autoland], since it was picked up
-            # and doesn't have a branch attached.
-            log.debug('No branches from tag %s' % (tag))
-            continue
         for branch in tuple(branches):
             # clean out any invalid branch names
             # job will still land to any correct branches
-            if db.BranchQuery(Branch(name=branch)) == None:
+            b = db.BranchQuery(Branch(name=branch))
+            if b == None:
                 branches.remove(branch)
-                log.error('Branch %s does not exist.' % (branch))
-
-        # If there are no correct or permissive branches, go to next bug
+                log.info('Branch %s does not exist.' % (branch))
+            elif b.status != 'enabled':
+                branches.remove(branch)
+                log.info('Branch %s is not enabled.' % (branch))
         if not branches:
+            log.info('Bug %d had no correct branches flagged' % (bug_id))
             continue
 
-        log.debug('Found and processing tag %s' % (tag))
-        # get the explicitly listed patches, if any
-        patch_group = get_patches_from_tag(tag) if not None else []
+        # patches are taken from the 'attachments' element of bug
+        # the only patches that should be taken are the patches with status
+        # 'waiting'
+        patch_group = bug.get('attachments', None)
+        # take only waiting patches
+        patch_group = [x for x in patch_group if x['status'] == 'waiting']
 
-        # get try syntax, if any
-        try_syntax = get_try_syntax_from_tag(tag)
+        # XXX XXX: Should only patches with 'who' the same be pulled into the
+        # single patch set? Or could be done by 'status_when'
 
-        ps = PatchSet()
+        patch_set = PatchSet()
         # all runs will get a try_run by default for now
-        ps.try_syntax = try_syntax
-        ps.branch = ','.join(branches)
-        ps.patches = patch_group
-        ps.bug_id = bug_id
+        patch_set.try_syntax = patch_group[0]['try_syntax']
+        patch_set.bug_id = bug_id
+        patch_set.branch = ','.join(branches)  # branches have been filtered out
+        patch_set.patches = [x['id'] for x in patch_group]
 
-        # check patch reviews & permissions
-        patches = get_patchset(ps.bug_id, ps.try_run,
-                               ps.patchList(), review_comment=False)
-        if not patches:
-            # do not have patches to push, kick it out of the queue
-            bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']', '\]'),
-                    bug_id)
-            log.error('No valid patches attached, nothing for '
-                      'Autoland to do here, removing this bug from the queue.')
-            continue
-        ps.author = patches[0]['author']['email']
-        ps.patches = ','.join(str(x['id']) for x in patches)
-
-        if db.PatchSetQuery(ps) != None:
+        if db.PatchSetQuery(patch_set) != None:
             # we already have this in the db, don't add it.
-            # Remove whiteboard tag, but don't add to db and don't comment.
-            log.debug('Duplicate patchset, removing whiteboard tag.')
-            bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']','\]'),
-                    bug_id)
+            # XXX: Need to update the bug
+            for patch in bug['attachments']:
+                pass
+                #bz.autoland_update_attachment(.....)
             continue
-
         # add try_run attribute here so that PatchSetQuery will match patchsets
         # in any stage of their lifecycle
-        ps.try_run = 1
+        patch_set.try_run = 1
 
-        log.info('Inserting job: %s' % (ps))
-        patchset_id = db.PatchSetInsert(ps)
-        log.info('Insert Patchset ID: %s' % (patchset_id))
+        patch_set.author = patch_group[0]['who']
 
-        bz.replace_whiteboard_tag('\[autoland[^\[\]]*\]',
-                '[autoland-in-queue]', bug_id)
+        log.info('Inserting job: %s' % (patch_set))
+        patchset_id = db.PatchSetInsert(patch_set)
+
+        # XXX: Update the bug
+        #bz.autoland_update_attachment(.....)
 
 
 def message_handler(message):
@@ -352,13 +337,13 @@ def message_handler(message):
             msg['branches'] = ['mozilla-central']
             msg['try_run'] = 1
 
-        ps = PatchSet(bug_id=msg.get('bug_id'),
+        patch_set = PatchSet(bug_id=msg.get('bug_id'),
                       branch=msg.get('branch'),
                       try_run=msg.get('try_run'),
                       try_syntax=msg.get('try_syntax'),
                       patches=msg.get('patches')
                      )
-        patchset_id = db.PatchSetInsert(ps)
+        patchset_id = db.PatchSetInsert(patch_set)
         log.info('Insert PatchSet ID: %s' % (patchset_id))
 
     comment = msg.get('comment')
@@ -373,88 +358,89 @@ def message_handler(message):
     if msg['type'] == 'success':
         if msg['action'] == 'try.push':
             # Successful push, add corresponding revision to patchset
-            ps = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))
-            if ps == None:
-                log.info('No corresponding patch set found for %s'
+            patch_set = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))
+            if patch_set == None:
+                log.error('No corresponding patch set found for %s'
                         % (msg['patchsetid']))
                 return
-            ps = ps[0]
-            log.debug('Got patchset back from DB: %s' % (ps))
-            ps.revision = msg['revision']
-            db.PatchSetUpdate(ps)
+            patch_set = patch_set[0]
+            log.debug('Got patchset back from DB: %s' % (patch_set))
+            patch_set.revision = msg['revision']
+            db.PatchSetUpdate(patch_set)
             log.debug('Added revision %s to patchset %s'
-                    % (ps.revision, ps.id))
+                    % (patch_set.revision, patch_set.id))
 
         elif '.run' in msg['action']:
             # this is a result from schedulerDBpoller
-            ps = db.PatchSetQuery(PatchSet(revision=msg['revision']))
-            if ps == None:
+            patch_set = db.PatchSetQuery(PatchSet(revision=msg['revision']))
+            if patch_set == None:
                 log.error('Revision %s not found in database.'
                         % (msg['revision']))
                 return
-            ps = ps[0]
+            patch_set = patch_set[0]
             # is this the try run before push to branch?
-            if ps.try_run and \
-                    msg['action'] == 'try.run' and ps.branch != 'try':
-                # remove try_run, when it comes up in the queue
-                # it will trigger push to branch(es)
-                ps.try_run = 0
-                ps.push_time = None
-                log.debug('Flag patchset %s revision %s for push to branch.'
-                        % (ps.id, ps.revision))
+            if patch_set.try_run and msg['action'] == 'try.run' \
+                    and patch_set.branch != 'try':
+                # remove try_run, when it comes up in the
+                # queue it will trigger push to branch(es)
+                patch_set.try_run = 0
+                patch_set.push_time = None
+                log.debug('Flagging patchset %s revision %s '
+                        'for push to branch(es).'
+                        % (patch_set.id, patch_set.revision))
             else:
                 # close it!
-                bz.remove_whiteboard_tag('\[autoland-in-queue\]', ps.bug_id)
-                db.PatchSetDelete(ps)
-                log.debug('Deleting patchset %s' % (ps.id))
+                bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+                db.PatchSetDelete(patch_set)
+                log.debug('Deleting patchset %s' % (patch_set.id))
                 return
 
         elif msg['action'] == 'branch.push':
             # Guaranteed patchset EOL
-            ps = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))[0]
-            bz.remove_whiteboard_tag('\[autoland-in-queue\]', ps.bug_id)
-            db.PatchSetDelete(ps)
-            log.debug('Successful push to branch of patchset %s.' % (ps.id))
+            patch_set = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))[0]
+            bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+            db.PatchSetDelete(patch_set)
+            log.debug('Successful push to branch of patchset %s.' % (patch_set.id))
     elif msg['type'] == 'timed out':
-        ps = None
+        patch_set = None
         if msg['action'] == 'try.run':
-            ps = db.PatchSetQuery(PatchSet(revision=msg['revision']))
-            if ps == None:
-                log.error('No corresponding patchset found for '
-                          'timed out revision %s' % (msg['revision']))
+            patch_set = db.PatchSetQuery(PatchSet(revision=msg['revision']))
+            if patch_set == None:
+                log.error('No corresponding patchset found '
+                        'for timed out revision %s' % msg['revision'])
                 return
-            ps = ps[0]
-        if ps:
-            # remove it from the queue, timeout should've been comented to bug
+            patch_set = patch_set[0]
+        if patch_set:
+            # remove it from the queue, timeout should have been comented to bug
             # XXX: (shall we confirm that here with bz_utils.has_comment?)
-            bz.remove_whiteboard_tag('\[autoland-in-queue\]', ps.bug_id)
-            db.PatchSetDelete(ps)
+            bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+            db.PatchSetDelete(patch_set)
             log.debug('Received time out on %s, deleting patchset %s'
-                    % (msg['action'], ps.id))
+                    % (msg['action'], patch_set.id))
     elif msg['type'] == 'error' or msg['type'] == 'failure':
-        ps = None
+        patch_set = None
         if msg['action'] == 'try.run' or msg['action'] == 'branch.run':
-            ps = db.PatchSetQuery(PatchSet(revision=msg['revision']))
-            if ps == None:
+            patch_set = db.PatchSetQuery(PatchSet(revision=msg['revision']))
+            if patch_set == None:
                 log.error('No corresponding patchset found for revision %s'
                         % (msg['revision']))
                 return
-            ps = ps[0]
+            patch_set = patch_set[0]
         elif msg['action'] == 'patchset.apply':
-            ps = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))
-            if ps == None:
+            patch_set = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))
+            if patch_set == None:
                 log.error('No corresponding patchset found for revision %s'
                         % msg['revision'])
                 return
-            ps = ps[0]
+            patch_set = patch_set[0]
 
-        if ps:
+        if patch_set:
             # remove it from the queue, error should have been comented to bug
             # XXX: (shall we confirm that here with bz_utils.has_coment?)
-            bz.remove_whiteboard_tag('\[autoland-in-queue\]', ps.bug_id)
-            db.PatchSetDelete(ps)
+            bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+            db.PatchSetDelete(patch_set)
             log.debug('Received error on %s, deleting patchset %s'
-                    % (msg['action'], ps.id))
+                    % (msg['action'], patch_set.id))
 
 def handle_patchset(patchset):
     """

@@ -10,13 +10,16 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 class bz_util():
-    def __init__(self, api_url, url, attachment_url=None,
-            username=None, password=None):
+    def __init__(self, api_url, jsonrpc_url, attachment_url=None,
+            username=None, password=None,
+            jsonrpc_login=None, jsonrpc_password=None):
         self.api_url = api_url
-        self.url = url
         self.attachment_url = attachment_url
         self.username = username
         self.password = password
+        self.jsonrpc_url = jsonrpc_url
+        self.jsonrpc_login = jsonrpc_login
+        self.jsonrpc_password = jsonrpc_password
 
 # Catch these exceptions:
 # bug doesn't exist
@@ -311,4 +314,62 @@ class bz_util():
         for bug in page['bugs']:
             bugs.append((bug['id'], bug[field]))
         return bugs
+
+    def autoland_get_bugs(self, retries=5):
+        """
+        Polls the Bugzilla WebService API for any flagged autoland bugs.
+        """
+        url = self.jsonrpc_url + "?method=TryAutoLand.getBugs"
+        url = url + "&Bugzilla_login=%s" % (self.jsonrpc_login)
+        url = url + "&Bugzilla_password=%s" % (self.jsonrpc_password)
+        req = urllib2.Request(url, None, {'Accept':'application/json',
+                    'Content-Type':'application/json'})
+        for i in range(retries):
+            try:
+                result = urllib2.urlopen(req)
+                data = result.read()
+                data = json.loads(data)
+                if data.get('error', None):
+                    # an error occurred
+                    log.error('TryAutoLand.getBugs(): %s: %s' % (data['error'], url))
+                    continue
+                return data.get('result')
+            except (urllib2.HTTPError, urllib2.URLError), e:
+                log.error('REQUEST ERROR: %s: %s' % (e, url))
+        return None
+
+    def autoland_update_attachment(self, params, retries=5):
+        """
+        Posts the update to the Bugzilla WebService API.
+        """
+        params['Bugzilla_login']=self.jsonrpc_login
+        params['Bugzilla_password']=self.jsonrpc_password
+        post_body = json.dumps({
+                "method":"TryAutoLand.updateStatus",
+                "version":1.1,
+                "params":params
+            })
+        url = self.jsonrpc_url
+        req = urllib2.Request(url, post_body, {'Accept':'application/json',
+                    'Content-Type':'application/json'})
+        req.get_method = lambda: "POST"
+        for i in range(retries):
+            try:
+                result = urllib2.urlopen(req)
+                data = result.read()
+                try:
+                    data = json.loads(data)
+                except ValueError:
+                    log.error('TryAutoLand.updateStatus() didn\'t return a JSON structure')
+                    print "retry #%d" % (i)
+                    continue
+
+                if data.get('error', None):
+                    log.error('TryAutoLand.updateStatus(): %s' % (data['error']))
+                    print "retry #%d" % (i)
+                    continue
+                return data
+            except (urllib2.HTTPError, urllib2.URLError), e:
+                log.error('REQUEST ERROR: %s: %s' % (e, url))
+        return None
 
