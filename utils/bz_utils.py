@@ -10,8 +10,9 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 class bz_util():
-    def __init__(self, api_url, jsonrpc_url, attachment_url=None,
+    def __init__(self, api_url, attachment_url=None,
             username=None, password=None,
+            jsonrpc_url=None,   # Not all tools use this
             jsonrpc_login=None, jsonrpc_password=None):
         self.api_url = api_url
         self.attachment_url = attachment_url
