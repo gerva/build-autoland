@@ -22,14 +22,27 @@ LOGFORMAT = logging.Formatter(
 LOGFILE = os.path.join(BASE_DIR, 'hgpusher.log')
 LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
-mq = mq_utils.mq_util()
+
+MQ = mq_utils.mq_util()
 
 config = common.get_configuration(os.path.join(BASE_DIR, 'config.ini'))
-bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
+BZ = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
-ldap = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
+LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
         config['ldap_bind_dn'], config['ldap_password'])
+
+##
+# Pre-compile some oft-used regexes
+##
+# Match the user line, starts with "User" and then a name
+# ends with an email address in <>
+RE_USERLINE = re.compile(r'# User [\w\s]+ '
+                '<[\w\d._%+-]+@[\w\d.-]+\.\w{2,6}>$')
+RE_PUSER = re.compile(r'# User ')
+# commit message is always first line not prefixed with #
+RE_COMMITLINE = re.compile(r'^[^#$]+')
+##
 
 class RepoCleanup(object):
     """
@@ -84,7 +97,7 @@ class Patch(object):
         or None on failure.
         """
         log.debug("Getting patch %s" % (self.num))
-        self.file = bz.get_patch(self.num, 'patches', create_path=True)
+        self.file = BZ.get_patch(self.num, 'patches', create_path=True)
         return self.file
 
     def fill_user(self):
@@ -100,7 +113,7 @@ class Patch(object):
         try:
             if self.file:
                 os.remove(self.file)
-        except OSError, err:
+        except OSError:
             log.error('File %s could not be deleted.' % (self.file))
         self.file = None
 
@@ -316,26 +329,16 @@ def has_valid_header(filename):
           if they want to be pushing to branch.
     """
     with open(filename, 'r') as f_in:
-        puser = re.compile(r'# User ')
-
-        # Match the user line, starts with "User" and then a name
-        # ends with an email address in <>
-        userline = re.compile(r'# User [\w\s]+ '
-                '<[\w\d._%+-]+@[\w\d.-]+\.\w{2,6}>$')
-
-        # Commit message is always fist line not prefixed with #
-        commitline = re.compile(r'^[^#$]+')
 
         has_userline = False
         for line in f_in:
-            if puser.match(line):
+            if RE_PUSER.match(line):
                 has_userline = True
                 # User line must be of the form
                 # # User Name <name@email.com>
-                if not userline.match(line):
+                if not RE_USERLINE.match(line):
                     log.info('Bad header.')
                     return False
-            elif commitline.match(line):
                 # userline always before commit message, so if we have it along
                 # with a commit message, return True, else False
                 return has_userline
@@ -348,9 +351,9 @@ def in_ldap_group(email, group):
     """
     Checks ldap if either email or the bz_email are a member of the group.
     """
-    bz_email = ldap.get_bz_email(email)
-    return ldap.is_member_of_group(email, group) \
-            or (bz_email and ldap.is_member_of_group(bz_email, group))
+    bz_email = LDAP.get_bz_email(email)
+    return LDAP.is_member_of_group(email, group) \
+            or (bz_email and LDAP.is_member_of_group(bz_email, group))
 
 def has_sufficient_permissions(patches, branch):
     """
@@ -360,7 +363,7 @@ def has_sufficient_permissions(patches, branch):
     if any patch is missing those permissions the whole patchset
     cannot be pushed.
     """
-    group = ldap.get_branch_permissions(branch)
+    group = LDAP.get_branch_permissions(branch)
     if group == None:
         return False
 
@@ -542,14 +545,14 @@ def message_handler(message):
                     'patchsetid': patchset.num,
                     'revision' : patch_revision,
                     'comment' : comment }
-            mq.send_message(msg, 'db')
+            MQ.send_message(msg, 'db')
         else:
             # error came when processing the patchset
             msg = { 'type' : 'error', 'action' : 'patchset.apply',
                     'patchsetid' : patchset.num,
                     'bug_id' : patchset.bug_id,
                     'comment' : comment }
-            mq.send_message(msg, 'db')
+            MQ.send_message(msg, 'db')
 
 def main():
     # set up logging
@@ -557,15 +560,15 @@ def main():
     LOGHANDLER.setFormatter(LOGFORMAT)
     log.addHandler(LOGHANDLER)
 
-    mq.set_host(config['mq_host'])
-    mq.set_exchange(config['mq_exchange'])
-    mq.connect()
+    MQ.set_host(config['mq_host'])
+    MQ.set_exchange(config['mq_exchange'])
+    MQ.connect()
 
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
             if arg == '--purge-queue':
                 # purge the autoland queue
-                mq.purge_queue(config['mq_hgp_queue'], prompt=True)
+                MQ.purge_queue(config['mq_hgp_queue'], prompt=True)
                 exit(0)
 
     try:
@@ -593,7 +596,7 @@ def main():
                     pass
                 os.makedirs('active')
 
-                mq.listen(queue=config['mq_hgp_queue'],
+                MQ.listen(queue=config['mq_hgp_queue'],
                         callback=message_handler, routing_key='hgpusher')
             except error.LockHeld:
                 # couldn't take the lock, check next workdir

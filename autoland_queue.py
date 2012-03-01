@@ -21,11 +21,11 @@ LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
 config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
-bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
+BZ = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
-mq = mq_utils.mq_util()
-db = DBHandler(config['databases_autoland_db_url'])
+MQ = mq_utils.mq_util()
+DB = DBHandler(config['databases_autoland_db_url'])
 
 if config.get('staging', False):
     import subprocess
@@ -93,7 +93,7 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
     reviews = []    # hold the review information corresponding to each patch
 
     # grab the bug data
-    bug_data = bz.request('bug/%s' % (bug_id))
+    bug_data = BZ.request('bug/%s' % (bug_id))
     if 'attachments' not in bug_data:
         return None     # bad bug id, or no attachments
 
@@ -108,7 +108,7 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                     continue
                 patch = { 'id' : user_patch,
                           'author' :
-                              bz.get_user_info(attachment['attacher']['name']),
+                              BZ.get_user_info(attachment['attacher']['name']),
                           'reviews' : [] }
                 reviews.append(get_reviews(attachment))
                 patchset.append(patch)
@@ -132,7 +132,7 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                 continue
             patch = { 'id' : attachment['id'],
                       'author' :
-                          bz.get_user_info(attachment['attacher']['name']),
+                          BZ.get_user_info(attachment['attacher']['name']),
                       'reviews' : [] }
             reviews.append(get_reviews(attachment))
             patchset.append(patch)
@@ -158,7 +158,7 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                                      'to push to branch.'
                                      % (patch['id']), bug_id)
                     return None
-                rev['reviewer'] = bz.get_user_info(rev['reviewer'])
+                rev['reviewer'] = BZ.get_user_info(rev['reviewer'])
             patch['reviews'] = revs
 
     if len(patchset) == 0:
@@ -173,7 +173,7 @@ def bz_search_handler():
     """
     bugs = []
     try:
-        bugs = bz.autoland_get_bugs()
+        bugs = BZ.autoland_get_bugs()
     except (urllib2.HTTPError, urllib2.URLError), err:
         log.error('Error while querying WebService API: %s' % (err))
         return
@@ -189,7 +189,7 @@ def bz_search_handler():
         for branch in tuple(branches):
             # clean out any invalid branch names
             # job will still land to any correct branches
-            b = db.BranchQuery(Branch(name=branch))
+            b = DB.BranchQuery(Branch(name=branch))
             if b == None:
                 branches.remove(branch)
                 log.info('Branch %s does not exist.' % (branch))
@@ -217,12 +217,12 @@ def bz_search_handler():
         patch_set.branch = ','.join(branches)  # branches have been filtered out
         patch_set.patches = [x['id'] for x in patch_group]
 
-        if db.PatchSetQuery(patch_set) != None:
+        if DB.PatchSetQuery(patch_set) != None:
             # we already have this in the db, don't add it.
             # XXX: Need to update the bug
             for patch in bug['attachments']:
                 pass
-                #bz.autoland_update_attachment(.....)
+                #BZ.autoland_update_attachment(.....)
             continue
         # add try_run attribute here so that PatchSetQuery will match patchsets
         # in any stage of their lifecycle
@@ -231,10 +231,10 @@ def bz_search_handler():
         patch_set.author = patch_group[0]['who']
 
         log.info('Inserting job: %s' % (patch_set))
-        patchset_id = db.PatchSetInsert(patch_set)
+        patchset_id = DB.PatchSetInsert(patch_set)
 
         # XXX: Update the bug
-        #bz.autoland_update_attachment(.....)
+        #BZ.autoland_update_attachment(.....)
 
 
 def message_handler(message):
@@ -292,7 +292,7 @@ def message_handler(message):
                       try_syntax=msg.get('try_syntax'),
                       patches=msg.get('patches')
                      )
-        patchset_id = db.PatchSetInsert(patch_set)
+        patchset_id = DB.PatchSetInsert(patch_set)
         log.info('Insert PatchSet ID: %s' % (patchset_id))
 
     comment = msg.get('comment')
@@ -307,7 +307,7 @@ def message_handler(message):
     if msg['type'] == 'success':
         if msg['action'] == 'try.push':
             # Successful push, add corresponding revision to patchset
-            patch_set = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))
+            patch_set = DB.PatchSetQuery(PatchSet(id=msg['patchsetid']))
             if patch_set == None:
                 log.error('No corresponding patch set found for %s'
                         % (msg['patchsetid']))
@@ -315,13 +315,13 @@ def message_handler(message):
             patch_set = patch_set[0]
             log.debug('Got patchset back from DB: %s' % (patch_set))
             patch_set.revision = msg['revision']
-            db.PatchSetUpdate(patch_set)
+            DB.PatchSetUpdate(patch_set)
             log.debug('Added revision %s to patchset %s'
                     % (patch_set.revision, patch_set.id))
 
         elif '.run' in msg['action']:
             # this is a result from schedulerDBpoller
-            patch_set = db.PatchSetQuery(PatchSet(revision=msg['revision']))
+            patch_set = DB.PatchSetQuery(PatchSet(revision=msg['revision']))
             if patch_set == None:
                 log.error('Revision %s not found in database.'
                         % (msg['revision']))
@@ -339,23 +339,23 @@ def message_handler(message):
                         % (patch_set.id, patch_set.revision))
             else:
                 # close it!
-                bz.remove_whiteboard_tag('\[autoland-in-queue\]',
+                BZ.remove_whiteboard_tag('\[autoland-in-queue\]',
                         patch_set.bug_id)
-                db.PatchSetDelete(patch_set)
+                DB.PatchSetDelete(patch_set)
                 log.debug('Deleting patchset %s' % (patch_set.id))
                 return
 
         elif msg['action'] == 'branch.push':
             # Guaranteed patchset EOL
-            patch_set = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))[0]
-            bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
-            db.PatchSetDelete(patch_set)
+            patch_set = DB.PatchSetQuery(PatchSet(id=msg['patchsetid']))[0]
+            BZ.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+            DB.PatchSetDelete(patch_set)
             log.debug('Successful push to branch of patchset %s.'
                     % (patch_set.id))
     elif msg['type'] == 'timed out':
         patch_set = None
         if msg['action'] == 'try.run':
-            patch_set = db.PatchSetQuery(PatchSet(revision=msg['revision']))
+            patch_set = DB.PatchSetQuery(PatchSet(revision=msg['revision']))
             if patch_set == None:
                 log.error('No corresponding patchset found '
                         'for timed out revision %s' % msg['revision'])
@@ -364,21 +364,21 @@ def message_handler(message):
         if patch_set:
             # remove it from the queue, timeout should have been comented to bug
             # XXX: (shall we confirm that here with bz_utils.has_comment?)
-            bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
-            db.PatchSetDelete(patch_set)
+            BZ.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+            DB.PatchSetDelete(patch_set)
             log.debug('Received time out on %s, deleting patchset %s'
                     % (msg['action'], patch_set.id))
     elif msg['type'] == 'error' or msg['type'] == 'failure':
         patch_set = None
         if msg['action'] == 'try.run' or msg['action'] == 'branch.run':
-            patch_set = db.PatchSetQuery(PatchSet(revision=msg['revision']))
+            patch_set = DB.PatchSetQuery(PatchSet(revision=msg['revision']))
             if patch_set == None:
                 log.error('No corresponding patchset found for revision %s'
                         % (msg['revision']))
                 return
             patch_set = patch_set[0]
         elif msg['action'] == 'patchset.apply':
-            patch_set = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))
+            patch_set = DB.PatchSetQuery(PatchSet(id=msg['patchsetid']))
             if patch_set == None:
                 log.error('No corresponding patchset found for revision %s'
                         % msg['revision'])
@@ -388,8 +388,8 @@ def message_handler(message):
         if patch_set:
             # remove it from the queue, error should have been comented to bug
             # XXX: (shall we confirm that here with bz_utils.has_coment?)
-            bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
-            db.PatchSetDelete(patch_set)
+            BZ.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+            DB.PatchSetDelete(patch_set)
             log.debug('Received error on %s, deleting patchset %s'
                     % (msg['action'], patch_set.id))
 
@@ -432,17 +432,17 @@ def handle_patchset(patchset):
     patches = get_patchset(patchset.bug_id, patchset.try_run,
                            user_patches=patchset.patchList())
     # get branch information so that message can contain branch_url
-    branch = db.BranchQuery(Branch(name=patchset.branch))
+    branch = DB.BranchQuery(Branch(name=patchset.branch))
     if not branch:
         # error, branch non-existent
         # XXX -- Should we email or otherwise let user know?
         log.error('Could not find %s in branches table.' % (patchset.branch))
-        db.PatchSetDelete(patchset)
+        DB.PatchSetDelete(patchset)
         return
     branch = branch[0]
-    jobs = db.BranchRunningJobsQuery(Branch(name=patchset.branch))
+    jobs = DB.BranchRunningJobsQuery(Branch(name=patchset.branch))
     log.debug("Running jobs on %s: %s" % (patchset.branch, jobs))
-    b = db.BranchQuery(Branch(name='try'))[0]
+    b = DB.BranchQuery(Branch(name='try'))[0]
     log.debug("Threshold for %s: %s" % (patchset.branch, b.threshold))
     if jobs < b.threshold:
         message = { 'job_type':'patchset', 'bug_id':patchset.bug_id,
@@ -451,17 +451,17 @@ def handle_patchset(patchset):
                 'try_syntax':patchset.try_syntax,
                 'patchsetid':patchset.id, 'patches':patches }
         if patchset.try_run == 1:
-            tb = db.BranchQuery(Branch(name='try'))
+            tb = DB.BranchQuery(Branch(name='try'))
             if tb: tb = tb[0]
             else: return
         log.info("SENDING MESSAGE: %s" % (message))
-        mq.send_message(message, routing_key='hgpusher')
+        MQ.send_message(message, routing_key='hgpusher')
         patchset.push_time = datetime.datetime.utcnow()
-        db.PatchSetUpdate(patchset)
+        DB.PatchSetUpdate(patchset)
     else:
         log.info("Too many jobs running right now, will have to wait.")
         patchset.retries += 1
-        db.PatchSetUpdate(patchset)
+        DB.PatchSetUpdate(patchset)
 
 def handle_comments():
     """
@@ -471,42 +471,42 @@ def handle_comments():
     picked up again later.
     If we have attempted 5 times, get rid of the comment and log it.
     """
-    comments = db.CommentGetNext(limit=5)   # Get up to 5 comments
+    comments = DB.CommentGetNext(limit=5)   # Get up to 5 comments
     for comment in comments:
         # Note that notify_bug makes multiple retries
-        success = bz.notify_bug(comment.comment, comment.bug)
+        success = BZ.notify_bug(comment.comment, comment.bug)
         if success:
             # Posted. Get rid of it.
-            db.CommentDelete(comment)
+            DB.CommentDelete(comment)
         elif comment.attempts == 5:
             # 5 attempts have been made, drop this comment as it is
             # probably not going anywhere.
             # XXX: Perhaps this should be written to a file.
             log.error("Could not post comment to bug %s. Dropping comment: %s"
                     % (comment.bug, comment.comment))
-            db.CommentDelete(comment.id)
+            DB.CommentDelete(comment.id)
         else:
             comment.attempts += 1
-            db.CommentUpdate(comment)
+            DB.CommentUpdate(comment)
 
 def post_comment(comment, bug_id):
     """
     Post a comment that isn't in the comments db.
     Add it if posting fails.
     """
-    success = bz.notify_bug(comment, bug_id)
+    success = BZ.notify_bug(comment, bug_id)
     if success:
         log.info('Posted comment: "%s" to %s' % (comment, bug_id))
     else:
         log.info('Could not post comment to bug %s. Adding to comments table'
                 % (bug_id))
         cmnt = Comment(comment=comment, bug=bug_id)
-        db.CommentInsert(cmnt)
+        DB.CommentInsert(cmnt)
 
 def main():
-    mq.set_host(config['mq_host'])
-    mq.set_exchange(config['mq_exchange'])
-    mq.connect()
+    MQ.set_host(config['mq_host'])
+    MQ.set_exchange(config['mq_exchange'])
+    MQ.connect()
 
     log.setLevel(logging.DEBUG)
     LOGHANDLER.setFormatter(LOGFORMAT)
@@ -516,7 +516,7 @@ def main():
         for arg in sys.argv[1:]:
             if arg == '--purge-queue':
                 # purge the autoland queue
-                mq.purge_queue(config['mq_autoland_queue'], prompt=True)
+                MQ.purge_queue(config['mq_autoland_queue'], prompt=True)
                 exit(0)
 
     while True:
@@ -528,7 +528,7 @@ def main():
             # if this is a staging instance, launch schedulerDbPoller in order
             # to poll by revision. This will allow for posting back to
             # landfill.
-            for revision in db.PatchSetGetRevs():
+            for revision in DB.PatchSetGetRevs():
                 cmd = ['bash', os.path.join(base_dir,
                                     'run_schedulerDbPoller_staging')]
                 cmd.append(revision)
@@ -540,7 +540,7 @@ def main():
                 log.info('stderr: %s' % (err))
 
         while time.time() < next_poll:
-            patchset = db.PatchSetGetNext()
+            patchset = DB.PatchSetGetNext()
             if patchset != None:
                 handle_patchset(patchset)
 
@@ -548,7 +548,7 @@ def main():
             handle_comments()
 
             # loop while we've got incoming messages
-            while mq.get_message(config['mq_autoland_queue'],
+            while MQ.get_message(config['mq_autoland_queue'],
                     message_handler, routing_key='db'):
                 continue
 
