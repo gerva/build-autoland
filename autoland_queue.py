@@ -31,56 +31,6 @@ db = DBHandler(config['databases_autoland_db_url'])
 if config.get('staging', False):
     import subprocess
 
-def get_first_autoland_tag(whiteboard):
-    """
-    Returns the first autoland tag in the whiteboard
-    """
-    r = re.compile(r'\[autoland(-[^\[\]:]+)?((:\d+(,\d+)*)'
-                   r'|(:-[^\[\]:]+)){0,2}\]', re.I)
-    s = r.search(whiteboard)
-    if s != None:
-        s = s.group().lower()
-    return s
-
-def get_branch_from_tag(tag):
-    """
-    Returns a list of branch names from the given autoland tag.
-    All tags must include "-branch" including try.
-    eg. [autoland-try], [autoland-mozilla-central],
-        [autoland-mozilla-aurora,mozilla-beta]
-    """
-    r = re.compile('\[autoland-([^:\]]+)', re.I)
-    s = r.search(tag)
-    if s == None:
-        return None
-    return re.split(',', s.groups()[0].lower())
-
-def get_try_syntax_from_tag(tag):
-    # return a string of try_syntax (must start with -)
-    parts = tag.strip('[]').split(':')
-    for part in parts:
-        if part.startswith('-'):
-            return part
-
-def get_patches_from_tag(tag):
-    # return a string of comma-delimited digits that represent attachment IDs
-    patches = ''
-    parts = tag.strip('[]').split(':')
-    r = re.compile('^[0-9]+(,^[0-9]+)*', re.I)
-    for part in parts:
-        s = r.search(part.strip())
-        if s != None:
-            values = part.strip().split(',')
-            for v in tuple(values):
-                try:
-                    int(v)
-                except:
-                    # well it's not valid then, don't include it
-                    values.remove(v)
-                    pass
-            patches = ','.join(values)
-    return patches
-
 def get_reviews(attachment):
     """
     Takes attachment JSON, returns a list of reviews.
