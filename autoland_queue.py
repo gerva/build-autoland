@@ -196,7 +196,8 @@ def bz_search_handler():
             if b == None:
                 branches.remove(branch)
                 log.info('Branch %s does not exist.' % (branch))
-            elif b.status != 'enabled':
+            b = b[0]
+            if b.status != 'enabled':
                 branches.remove(branch)
                 log.info('Branch %s is not enabled.' % (branch))
         if not branches:

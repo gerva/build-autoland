@@ -38,7 +38,7 @@ class TestHgPusher(unittest.TestCase):
         os.mkdir('work_dir')
         hgpusher.config['hg_base_url'] = test_dir
 
-        hgpusher.mq = mq_utils.mq_util()
+        hgpusher.MQ = mq_utils.mq_util()
         hgpusher.config['work_dir'] = os.path.join(test_dir, 'work_dir')
 
     def tearDown(self):
@@ -124,7 +124,7 @@ class TestHgPusher(unittest.TestCase):
         Test the Patch class.
         """
         p = Patch({'id':1,'author':{'name':'name', 'email':'email'}})
-        with mock.patch('hgpusher.bz.get_patch') as gp:
+        with mock.patch('hgpusher.BZ.get_patch') as gp:
             def gpf(num, dir, create_path=False):
                 file = open('%s.patch' % (num), 'w')
                 file.write('patch')
@@ -260,9 +260,9 @@ class TestHgPusher(unittest.TestCase):
                                 self.assertEquals(rmt.call_count, 2)
 
     def testHasSufficientPermissions(self):
-        with mock.patch('hgpusher.ldap.get_member') as ld_gm:
-            with mock.patch('hgpusher.ldap.get_branch_permissions') as ld_gbp:
-                with mock.patch('hgpusher.ldap.is_member_of_group') as ld_imog:
+        with mock.patch('hgpusher.LDAP.get_member') as ld_gm:
+            with mock.patch('hgpusher.LDAP.get_branch_permissions') as ld_gbp:
+                with mock.patch('hgpusher.LDAP.is_member_of_group') as ld_imog:
                     ld_gbp.return_value = None
                     ret = has_sufficient_permissions(None, 'branch')
                     self.assertFalse(ret)
@@ -362,7 +362,7 @@ class TestHgPusher(unittest.TestCase):
             vjm.return_value = True
             #XXX:message_handler(msg[0])
             with mock.patch('hgpusher.Patchset.process') as pp:
-                with mock.patch('hgpusher.mq.send_message') as sm:
+                with mock.patch('hgpusher.MQ.send_message') as sm:
                     #pp.return_value = (cb.return_value, 'This is a comment')
                     # XXX: Need to check that this case is covered.
                     pp.return_value = ('aaaaaa', 'comment')
