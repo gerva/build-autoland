@@ -66,7 +66,7 @@ class bz_util():
                     log.debug('Put success')
                     return result
                 time.sleep(interval)
-            except HTTP_EXCEPTIONS, err:
+            except HTTP_EXCEPTIONS:
                 if i < retries:
                     continue
                 else:
@@ -242,8 +242,9 @@ class bz_util():
                         method='POST')
                 log.debug('Added comment to bug %s' % (bug_num))
                 result = 1
-            except (Exception, urllib2.URLError, urllib2.HTTPError), err:
-                log.debug('Couldn\t get bug, retry %d of %d' % (i +1, retries))
+            except ((Exception,) + HTTP_EXCEPTIONS), err:
+                log.debug('Couldn\t get bug, retry %d of %d -- %s'
+                        % (i+1, retries, err))
                 result = 0
                 if i < retries:
                     continue
@@ -291,7 +292,8 @@ class bz_util():
             # May need to account for timezone
             creation_time = datetime.datetime.strptime(
                     comment['creation_time'], '%Y-%m-%dT%H:%M:%SZ')
-            if (current_time - creation_time) < datetime.timedelta(hours=hours):
+            if (current_time - creation_time) < \
+                    datetime.timedelta(hours=hours):
                 if re.search(regex, comment['text'], re.I):
                     return True
         return False
@@ -331,21 +333,22 @@ class bz_util():
                 result = urllib2.urlopen(req)
                 data = result.read()
                 data = json.loads(data)
-                if data.get('error', None):
+                if data.get('error'):
                     # an error occurred
-                    log.error('TryAutoLand.getBugs(): %s: %s' % (data['error'], url))
+                    log.error('TryAutoLand.getBugs(): %s: %s'
+                            % (data['error'], url))
                     continue
                 return data.get('result')
-            except (urllib2.HTTPError, urllib2.URLError), e:
-                log.error('REQUEST ERROR: %s: %s' % (e, url))
+            except (urllib2.HTTPError, urllib2.URLError), err:
+                log.error('REQUEST ERROR: %s: %s' % (err, url))
         return None
 
     def autoland_update_attachment(self, params, retries=5):
         """
         Posts the update to the Bugzilla WebService API.
         """
-        params['Bugzilla_login']=self.jsonrpc_login
-        params['Bugzilla_password']=self.jsonrpc_password
+        params['Bugzilla_login'] = self.jsonrpc_login
+        params['Bugzilla_password'] = self.jsonrpc_password
         post_body = json.dumps({
                 "method":"TryAutoLand.updateStatus",
                 "version":1.1,
@@ -362,16 +365,18 @@ class bz_util():
                 try:
                     data = json.loads(data)
                 except ValueError:
-                    log.error('TryAutoLand.updateStatus() didn\'t return a JSON structure')
+                    log.error('TryAutoLand.updateStatus() didn\'t '
+                              'return a JSON structure')
                     print "retry #%d" % (i)
                     continue
 
-                if data.get('error', None):
-                    log.error('TryAutoLand.updateStatus(): %s' % (data['error']))
+                if data.get('error'):
+                    log.error('TryAutoLand.updateStatus(): %s'
+                            % (data['error']))
                     print "retry #%d" % (i)
                     continue
                 return data
-            except (urllib2.HTTPError, urllib2.URLError), e:
-                log.error('REQUEST ERROR: %s: %s' % (e, url))
+            except (urllib2.HTTPError, urllib2.URLError), err:
+                log.error('REQUEST ERROR: %s: %s' % (err, url))
         return None
 
