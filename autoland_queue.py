@@ -1,6 +1,5 @@
 import time
-import os, errno, sys
-import re
+import os, sys
 import logging
 import logging.handlers
 import datetime
@@ -340,7 +339,8 @@ def message_handler(message):
                         % (patch_set.id, patch_set.revision))
             else:
                 # close it!
-                bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
+                bz.remove_whiteboard_tag('\[autoland-in-queue\]',
+                        patch_set.bug_id)
                 db.PatchSetDelete(patch_set)
                 log.debug('Deleting patchset %s' % (patch_set.id))
                 return
@@ -350,7 +350,8 @@ def message_handler(message):
             patch_set = db.PatchSetQuery(PatchSet(id=msg['patchsetid']))[0]
             bz.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
             db.PatchSetDelete(patch_set)
-            log.debug('Successful push to branch of patchset %s.' % (patch_set.id))
+            log.debug('Successful push to branch of patchset %s.'
+                    % (patch_set.id))
     elif msg['type'] == 'timed out':
         patch_set = None
         if msg['action'] == 'try.run':
