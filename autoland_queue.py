@@ -21,9 +21,12 @@ LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
 config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
-BZ = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
+BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
         attachment_url=config['bz_attachment_url'],
-        username=config['bz_username'], password=config['bz_password'])
+        username=config['bz_username'], password=config['bz_password'],
+        jsonrpc_url=config['bz_jsonrpc_url'],
+        jsonrpc_login=config['bz_jsonrpc_login'],
+        jsonrpc_password=config['bz_jsonrpc_password'])
 MQ = mq_utils.mq_util()
 DB = DBHandler(config['databases_autoland_db_url'])
 
@@ -103,8 +106,8 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
         for user_patch in tuple(user_patches):
             for attachment in bug_data['attachments']:
                 if attachment['id'] != user_patch or \
-                        not attachment['is_patch'] \
-                        or attachment['is_obsolete']:
+                        not attachment['is_patch'] or \
+                        attachment['is_obsolete']:
                     continue
                 patch = { 'id' : user_patch,
                           'author' :
@@ -118,11 +121,11 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
         if len(user_patches) != 0:
             # not all requested patches could be picked up
             # XXX TODO - should we still push what patches _did get picked up?
-            log.debug('Autoland failure. '
-                    'Not all user_patches could be picked up from bug.')
+            log.debug('Autoland failure. Not all user_patches could '
+                      'be picked up from bug.')
             post_comment(('Autoland Failure\nSpecified patches %s '
-                'do not exist, or are not posted to this bug.'
-                % (user_patches)), bug_id)
+                          'do not exist, or are not posted to this bug.'
+                          % (user_patches)), bug_id)
             return None
     else:
         # no user-specified patches, grab them in the order they were posted.
@@ -148,14 +151,15 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
         if not revs:
             if review_comment:
                 post_comment('Autoland Failure\nPatch %s requires review+ '
-                        'to push to branch.' % (patch['id']), bug_id)
+                             'to push to branch.' % (patch['id']), bug_id)
                 return None
             for rev in revs:
                 if rev['result'] != '+':    # Bad review, fail
                     if review_comment:
                         post_comment('Autoland Failure\nPatch %s has a '
-                                'non-passing review. Requires review+ to '
-                                'push to branch.' % (patch['id']), bug_id)
+                                     'non-passing review. Requires review+ '
+                                     'to push to branch.'
+                                     % (patch['id']), bug_id)
                     return None
                 rev['reviewer'] = BZ.get_user_info(rev['reviewer'])
             patch['reviews'] = revs
@@ -192,7 +196,8 @@ def bz_search_handler():
             if b == None:
                 branches.remove(branch)
                 log.info('Branch %s does not exist.' % (branch))
-            elif b.status != 'enabled':
+            b = b[0]
+            if b.status != 'enabled':
                 branches.remove(branch)
                 log.info('Branch %s is not enabled.' % (branch))
         if not branches:
@@ -218,7 +223,6 @@ def bz_search_handler():
 
         if DB.PatchSetQuery(patch_set) != None:
             # we already have this in the db, don't add it.
-            log.debug('Duplicate patchset, removing whiteboard tag.')
             # XXX: Need to update the bug
             for patch in bug['attachments']:
                 pass
@@ -295,10 +299,10 @@ def message_handler(message):
         patchset_id = DB.PatchSetInsert(patch_set)
         log.info('Insert PatchSet ID: %s' % (patchset_id))
 
-    comment = msg.get('comment', None)
+    comment = msg.get('comment')
     if comment:
         # Handle the posting of a comment
-        bug_id = msg.get('bug_id', None)
+        bug_id = msg.get('bug_id')
         if not bug_id:
             log.error('Have comment, but no bug_id')
         else:
@@ -435,7 +439,7 @@ def handle_patchset(patchset):
     branch = DB.BranchQuery(Branch(name=patchset.branch))
     if not branch:
         # error, branch non-existent
-        # XXX -- SHould we email or otherwise let user know?
+        # XXX -- Should we email or otherwise let user know?
         log.error('Could not find %s in branches table.' % (patchset.branch))
         DB.PatchSetDelete(patchset)
         return
@@ -455,12 +459,7 @@ def handle_patchset(patchset):
             if tb: tb = tb[0]
             else: return
         log.info("SENDING MESSAGE: %s" % (message))
-<<<<<<< HEAD
-        # XXX TODO: test that message sent properly, set to retry if not
-        mq.send_message(message, routing_key='hgpusher')
-=======
         MQ.send_message(message, routing_key='hgpusher')
->>>>>>> bf01c1d... Further pep8 compatibility.
         patchset.push_time = datetime.datetime.utcnow()
         DB.PatchSetUpdate(patchset)
     else:
@@ -535,11 +534,14 @@ def main():
             # landfill.
             for revision in DB.PatchSetGetRevs():
                 cmd = ['bash', os.path.join(base_dir,
-                    'run_schedulerDbPoller_staging')]
+                                    'run_schedulerDbPoller_staging')]
                 cmd.append(revision)
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE)
+                            stderr=subprocess.PIPE)
                 (out, err) = proc.communicate()
+                log.info('schedulerDbPoller Returned: %d' % (proc.returncode))
+                log.info('stdout: %s' % (out))
+                log.info('stderr: %s' % (err))
 
         while time.time() < next_poll:
             patchset = DB.PatchSetGetNext()

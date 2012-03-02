@@ -38,7 +38,7 @@ class TestHgPusher(unittest.TestCase):
         os.mkdir('work_dir')
         hgpusher.config['hg_base_url'] = test_dir
 
-        hgpusher.mq = mq_utils.mq_util()
+        hgpusher.MQ = mq_utils.mq_util()
         hgpusher.config['work_dir'] = os.path.join(test_dir, 'work_dir')
 
     def tearDown(self):
@@ -124,7 +124,7 @@ class TestHgPusher(unittest.TestCase):
         Test the Patch class.
         """
         p = Patch({'id':1,'author':{'name':'name', 'email':'email'}})
-        with mock.patch('hgpusher.bz.get_patch') as gp:
+        with mock.patch('hgpusher.BZ.get_patch') as gp:
             def gpf(num, dir, create_path=False):
                 file = open('%s.patch' % (num), 'w')
                 file.write('patch')
@@ -154,11 +154,11 @@ class TestHgPusher(unittest.TestCase):
         self.assertEquals(ps.comment, [comment[0]])
 
     def testPatchSetVerify(self):
-        self.assertRaises(Patchset.RETRY,
+        self.assertRaises(Patchset.RetryException,
             Patchset(1, 1, [], True, '', '', '', None).verify)
         with mock.patch('hgpusher.Patch.get_file') as pgf:
             pgf.return_value = None
-            self.assertRaises(Patchset.RETRY,
+            self.assertRaises(Patchset.RetryException,
                 Patchset(1, 1, [{'id':1, 'author':
                     {'name':'name', 'email':'email'}}],
                     True, '', '', '', None).verify)
@@ -169,7 +169,7 @@ class TestHgPusher(unittest.TestCase):
                 ps = Patchset(1,1, [{'id':1, 'author':
                         {'name':'name', 'email':'email'}}],
                         False, '', '', '', None)
-                self.assertRaises(Patchset.RETRY, ps.verify)
+                self.assertRaises(Patchset.RetryException, ps.verify)
                 self.assertTrue('Patch 1 doesn\'t have '
                         'a properly formatted header.' in ps.comment)
                 hvh.assert_called_once_with(None)
@@ -179,7 +179,7 @@ class TestHgPusher(unittest.TestCase):
                     ip.return_value = (False, 'error msg')
                     # test invalid header on Try landing, failed patch
                     ps.try_run = True
-                    self.assertRaises(Patchset.RETRY, ps.verify)
+                    self.assertRaises(Patchset.RetryException, ps.verify)
                     ip.assert_called_once()
                     self.assertTrue('Patch 1 could not be applied to .\n'
                             'error msg' in ps.comment)
@@ -206,7 +206,7 @@ class TestHgPusher(unittest.TestCase):
         ps.setup_comment()
         with mock.patch('hgpusher.import_patch') as ip:
             ip.side_effect = ipf
-            self.assertRaises(Patchset.RETRY, ps.full_import, 'dir')
+            self.assertRaises(Patchset.RetryException, ps.full_import, 'dir')
             print ps.comment
             self.assertTrue(len(ps.comment) == 2)
             self.assertTrue('Patch 2 could not be applied to .\nerr'
@@ -233,7 +233,7 @@ class TestHgPusher(unittest.TestCase):
                 with mock.patch('hgpusher.retry') as hgr:
                     hsp.return_value = True
                     cb.return_value = True
-                    hgr.side_effect = Patchset.RETRY
+                    hgr.side_effect = Patchset.RetryException
                     # failed apply_and_push
                     self.assertFalse(ps.process()[0])
                     self.assertEqual(cb.call_count, 4)
@@ -260,9 +260,9 @@ class TestHgPusher(unittest.TestCase):
                                 self.assertEquals(rmt.call_count, 2)
 
     def testHasSufficientPermissions(self):
-        with mock.patch('hgpusher.ldap.get_member') as ld_gm:
-            with mock.patch('hgpusher.ldap.get_branch_permissions') as ld_gbp:
-                with mock.patch('hgpusher.ldap.is_member_of_group') as ld_imog:
+        with mock.patch('hgpusher.LDAP.get_member') as ld_gm:
+            with mock.patch('hgpusher.LDAP.get_branch_permissions') as ld_gbp:
+                with mock.patch('hgpusher.LDAP.is_member_of_group') as ld_imog:
                     ld_gbp.return_value = None
                     ret = has_sufficient_permissions(None, 'branch')
                     self.assertFalse(ret)
@@ -362,7 +362,7 @@ class TestHgPusher(unittest.TestCase):
             vjm.return_value = True
             #XXX:message_handler(msg[0])
             with mock.patch('hgpusher.Patchset.process') as pp:
-                with mock.patch('hgpusher.mq.send_message') as sm:
+                with mock.patch('hgpusher.MQ.send_message') as sm:
                     #pp.return_value = (cb.return_value, 'This is a comment')
                     # XXX: Need to check that this case is covered.
                     pp.return_value = ('aaaaaa', 'comment')

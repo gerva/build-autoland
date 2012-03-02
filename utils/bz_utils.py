@@ -10,8 +10,9 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 class bz_util():
-    def __init__(self, api_url, jsonrpc_url, attachment_url=None,
+    def __init__(self, api_url, attachment_url=None,
             username=None, password=None,
+            jsonrpc_url=None,   # Not all tools use this
             jsonrpc_login=None, jsonrpc_password=None):
         self.api_url = api_url
         self.attachment_url = attachment_url
@@ -43,7 +44,7 @@ class bz_util():
         req = urllib2.Request(url, data, {'Accept': 'application/json',
                 'Content-Type': 'application/json'})
         if method:
-            req.get_method = lambda: method,
+            req.get_method = lambda: method
         try:
             result = urllib2.urlopen(req)
             data = result.read()
@@ -98,9 +99,8 @@ class bz_util():
             return None
         if re.search('The attachment id %s is invalid' % str(patch_id), data):
             return None
-        file_ = open(patch_file, 'w')
-        file_.write(data)
-        file_.close()
+        with open(patch_file, 'w') as f_out:
+            f_out.write(data)
         return os.path.abspath(patch_file)
 
     def get_user_info(self, email):
@@ -142,8 +142,8 @@ class bz_util():
             self.put_request(path='bug/%s' % (bugid),
                     data=data, retries=retries, interval=interval)
             return True
-        except (Exception + HTTP_EXCEPTIONS), err:
-            log.error('Did not remove whiteboard tag to bug %s : %s'
+        except ((Exception,) + HTTP_EXCEPTIONS), err:
+            log.error('Did not remove whiteboard tag from bug %s : %s'
                     % (bugid, err))
             return False
 
@@ -168,7 +168,7 @@ class bz_util():
             self.put_request(path='bug/%s' % (bugid),
                     data=data, retries=retries, interval=interval)
             return True
-        except (Exception + HTTP_EXCEPTIONS), err:
+        except ((Exception,) + HTTP_EXCEPTIONS), err:
             log.debug('Did not add whiteboard tag to bug %s : %s'
                     % (bugid, err))
             return False
@@ -201,7 +201,7 @@ class bz_util():
             self.put_request(path='bug/%s' % (bugid),
                     data=data, retries=retries, interval=interval)
             return True
-        except (Exception + HTTP_EXCEPTIONS), err:
+        except ((Exception,) + HTTP_EXCEPTIONS), err:
             log.debug('Did not replace whiteboard tag to bug %s : %s'
                     % (bugid, err))
             return False
@@ -235,7 +235,6 @@ class bz_util():
             try:
                 # Make sure we can reach this bug
                 bug = self.request('bug/%s' % (bug_num))
-                log.debug('BUG URL EXISTS: %s' % (bug))
                 # Add the comment
                 self.request(path='bug/%s/comment' % (bug_num),
                         data={'text': message, 'is_private': False},
