@@ -25,7 +25,7 @@ class DBHandler(object):
         It can return multiple rows for one build request, one for each build (if 
         the build request has multiple builds) and one for each changeid (if there 
         are multiple changes for one build request), if and only if changeid_all is 
-        True. If changeid_all if False, only one changeid will be returned per 
+        True. If changeid_all if False, only one changeid will be returned per
         build request.
     
         You should use function GetBuildRequests, which groups all rows into 

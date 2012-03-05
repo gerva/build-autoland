@@ -207,7 +207,7 @@ def bz_search_handler():
         # patches are taken from the 'attachments' element of bug
         # the only patches that should be taken are the patches with status
         # 'waiting'
-        patch_group = bug.get('attachments', None)
+        patch_group = bug.get('attachments')
         # take only waiting patches
         patch_group = [x for x in patch_group if x['status'] == 'waiting']
 
@@ -218,12 +218,12 @@ def bz_search_handler():
         # all runs will get a try_run by default for now
         patch_set.try_syntax = patch_group[0]['try_syntax']
         patch_set.bug_id = bug_id
-        patch_set.branch = ','.join(branches)  # branches have been filtered out
+        patch_set.branch = ','.join(branches)  # branches have been filtered
         patch_set.patches = [x['id'] for x in patch_group]
 
         if DB.PatchSetQuery(patch_set) != None:
             # we already have this in the db, don't add it.
-            # XXX: Need to update the bug
+# XXX: Need to update the bug
             for patch in bug['attachments']:
                 pass
                 #BZ.autoland_update_attachment(.....)
@@ -237,7 +237,7 @@ def bz_search_handler():
         log.info('Inserting job: %s' % (patch_set))
         patchset_id = DB.PatchSetInsert(patch_set)
 
-        # XXX: Update the bug
+# XXX: Update the bug
         #BZ.autoland_update_attachment(.....)
 
 
@@ -343,6 +343,7 @@ def message_handler(message):
                         % (patch_set.id, patch_set.revision))
             else:
                 # close it!
+#XXX XXX: BZ.update bug
                 BZ.remove_whiteboard_tag('\[autoland-in-queue\]',
                         patch_set.bug_id)
                 DB.PatchSetDelete(patch_set)
@@ -352,6 +353,7 @@ def message_handler(message):
         elif msg['action'] == 'branch.push':
             # Guaranteed patchset EOL
             patch_set = DB.PatchSetQuery(PatchSet(id=msg['patchsetid']))[0]
+#XXX XXX: BZ.update bug
             BZ.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
             DB.PatchSetDelete(patch_set)
             log.debug('Successful push to branch of patchset %s.'
@@ -368,6 +370,7 @@ def message_handler(message):
         if patch_set:
             # remove it from the queue, timeout should have been comented to bug
             # XXX: (shall we confirm that here with bz_utils.has_comment?)
+#XXX XXX: BZ.update bug
             BZ.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
             DB.PatchSetDelete(patch_set)
             log.debug('Received time out on %s, deleting patchset %s'
@@ -392,6 +395,7 @@ def message_handler(message):
         if patch_set:
             # remove it from the queue, error should have been comented to bug
             # XXX: (shall we confirm that here with bz_utils.has_coment?)
+#XXX XXX: BZ.update bug
             BZ.remove_whiteboard_tag('\[autoland-in-queue\]', patch_set.bug_id)
             DB.PatchSetDelete(patch_set)
             log.debug('Received error on %s, deleting patchset %s'
