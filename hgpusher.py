@@ -13,7 +13,8 @@ site.addsitedir('%s/../../lib/python' % (BASE_DIR))
 
 from util.hg import mercurial, apply_and_push, HgUtilError, \
                     update, get_revision
-from util.retry import retry
+from util.retry import retry, retriable
+from util.commands import run_cmd 
 
 
 log = logging.getLogger()
@@ -44,6 +45,9 @@ RE_PUSER = re.compile(r'# User ')
 RE_COMMITLINE = re.compile(r'^[^#$]+')
 ##
 
+class RetryException(Exception):
+    pass
+
 class RepoCleanup(object):
     """
     Used for cleaning up the active/clean repositories for
@@ -67,8 +71,14 @@ class RepoCleanup(object):
         to get rid of any applied, not committed patches.
         """
         active_repo = os.path.join('active', self.branch)
-        update(active_repo)
+
+        # get rid of any imported and qpush-ed patches
+        log.debug('qpop -a and rm -rf .hg/patches')
+        (success, err, ret) = run_hg(['qpop', '-a'])
+        run_cmd(['rm', '-rf', os.path.join(active_repo, '.hg/patches')])
+
         log.debug('Update -C on active repo for: %s' % (self.branch))
+        update(active_repo)
 
     def hard_clean(self):
         """
@@ -76,8 +86,9 @@ class RepoCleanup(object):
         """
         clear_branch(self.branch)
         log.debug('Wiped repositories for: %s' % (self.branch))
-        cloned_revision = clone_branch(self.branch, self.url)
-        if cloned_revision == None:
+        try:
+            cloned_revision = clone_branch(self.branch, self.url)
+        except RetryException:
             log.error('[HgPusher] Clone error while cleaning')
             # XXX: do something....
 
@@ -119,9 +130,6 @@ class Patch(object):
 
 
 class Patchset(object):
-    class RetryException(Exception):
-        pass
-
     def __init__(self, ps_id, bug_id, patches, try_run, push_url,
             branch, branch_url, user, try_syntax=None):
         self.num = ps_id
@@ -174,13 +182,9 @@ class Patchset(object):
             return (False, '\n'.join(self.comment))
         # 2. Clone the repository
         cloned_rev = None
-        for attempts in range(3):
-            log.debug('Attempt %d to clone %s' % (attempts, self.branch_url))
+        try:
             cloned_rev = clone_branch(self.branch, self.branch_url)
-            if cloned_rev:
-                break
-            clear_branch(self.branch)
-        if not cloned_rev:
+        except RetryException:
             log.error('[Branch %s] Could not clone from %s.'
                     % (self.branch, self.branch_url))
             self.add_comment('An error occurred while cloning %s.'
@@ -193,7 +197,7 @@ class Patchset(object):
             # 2nd attempt is after an update -C,
             # 3rd attempt is a fresh clone
             retry(apply_and_push, attempts=3,
-                    retry_exceptions=(self.RetryException),
+                    retry_exceptions=(RetryException),
                     cleanup=RepoCleanup(self.branch, self.branch_url),
                     args=(self.active_repo, self.push_url,
                           self.apply_patches, 1),
@@ -204,12 +208,18 @@ class Patchset(object):
             shutil.rmtree(self.active_repo)
             for patch in self.patches:
                 patch.delete()
-        except (HgUtilError, self.RetryException), err:
+        except (HgUtilError, RetryException), err:
             # Failed
             log.error('[PatchSet] Could not be applied and pushed.\n%s'
                     % (err))
             self.add_comment('Patchset could not be applied and pushed.'
                              '\n%s' % (err))
+            return (False, '\n'.join(self.comment))
+        except (OSError), err:
+            # There was an error with the active_repo location
+            log.error('An error occurred: %s' % (err))
+            self.add_comment('Patchset could not be applied and pushed.'
+                             '\nAn unexpected error occurred')
             return (False, '\n'.join(self.comment))
         # Success
         self.setup_comment() # Clear the comment
@@ -246,8 +256,7 @@ class Patchset(object):
         If anything fails, RetryException will be raised.
         """
         self.verify()                   # verify patches can apply cleanly
-        update(self.active_repo)        # 'update -C' to get rid of changes
-        self.full_import(branch_dir)    # apply the patches & commit
+        self.finish_import()
 
     def verify(self):
         """
@@ -258,14 +267,14 @@ class Patchset(object):
         """
         log.debug('Verifying patchset')
         if not self.patches:
-            raise self.RetryException
+            raise RetryException
         for patch in self.patches:
             # 1. The patch exists and can be downloaded
             if not patch.get_file():
                 log.error('[Patch %s] Couldn\'t be fetched.' % (patch.num))
                 self.add_comment('Patch %s couldn\'t be fetched.'
                         % (patch.num))
-                raise self.RetryException
+                raise RetryException
             # 2. has valid headers. If try run, put user data into patch.user
             valid_header = has_valid_header(patch.file)
             if not valid_header:
@@ -275,20 +284,21 @@ class Patchset(object):
                             'a properly formatted header.'
                             % (patch.num))
                     # XXX: is this a RetryException case, or a fail case
-                    raise self.RetryException
+                    raise RetryException
                 patch.fill_user()
-            # 3. patch applies using 'import --no-commit -f'
-            (patch_success, err) = import_patch(self.active_repo, patch.file,
-                    self.try_run, no_commit=True)
+            # 3. patch applies using 'qimport; qpush'
+            (patch_success, err) = import_patch(self.active_repo,
+                    patch.file, self.try_run, user=patch.user,
+                    try_syntax=self.try_syntax)
             if not patch_success:
                 log.error('[Patch %s] could not verify import:\n%s'
                         % (patch.num, err))
                 self.add_comment('Patch %s could not be applied to %s.\n%s'
                         % (patch.num, self.branch, err))
-                raise self.RetryException
+                raise RetryException
         log.debug('Patchset is valid')
 
-    def full_import(self, branch_dir):
+    def finish_import(self):
         """
         Perform an 'hg import' on each patch in the set.
         If this is a try run, use the patch.user field to commit.
@@ -310,7 +320,7 @@ class Patchset(object):
                 log.error('Unable to create null commit: %s' % (err))
                 raise RetryException
 
-        cmd = ['qfinish', '-a']
+        cmd = ['qfinish', '-a', '-R', self.active_repo]
         (output, err, ret) = run_hg(cmd)
         if ret != 0:
             log.error('Unable to qfinish the patch queue: %s\nRetrying.'
@@ -377,37 +387,44 @@ def has_sufficient_permissions(user_email, branch):
         return False
     return in_ldap_group(user_email, group)
 
-def import_patch(repo, patch, try_run, no_commit=False, bug_id=None, user=None,
+def import_patch(repo, patch, try_run, bug_id=None, user=None,
         try_syntax="-b do -p all -u none -t none"):
     """
-    Import patch file patch into repo.
-    If it is a try run, replace commit message with "try:"
+    Import patch file patch into a mercurial queue.
 
     Import is used to pull required header information, and to
     automatically perform a commit for each patch
     """
-    cmd = ['import', '-R']
-    cmd.append(repo)
-    if no_commit:
-        cmd.append('--no-commit')
-        cmd.append('-f')
-    else:
-        if user:
-            cmd.extemd(['-u',user])
-        if try_syntax == None:
-            try_syntax = ''
-        if try_run:
-            # if there is no try_syntax,
-            # try defaults will be triggered by 'try:'
-            if config.get('staging', False):
-                cmd.extend(['-m', 'try: %s -n bug %s' % (try_syntax, bug_id)])
-            else:
-                cmd.extend(['-m', 'try: %s -n --post-to-bugzilla bug %s' \
-                        % (try_syntax, bug_id)])
-    cmd.append(patch)
+    cmd = ['qimport', '-R', repo, patch]
+    (output, err, ret) = run_hg(cmd)
+    if ret != 0:
+        return (ret == 0, err)
+    cmd = ['qpush', '-R', repo]
+    (output, err, ret) = run_hg(cmd)
+    if ret != 0:
+        return (ret == 0, err)
+# XXX
+# XXX Should we qrefresh in a user for each patch?
+# XXX
+    cmd = ['qrefresh', '-R', repo]
+    # if a user field specified, qrefesh that name in there
+    if user:
+        cmd.extend(['-u', user])
+
+    if try_syntax == None:
+        try_syntax = ''
+    if try_run:
+        # if there is no try_syntax,
+        # try defaults will be triggered by 'try:'
+        if config.get('staging', False):
+            cmd.extend(['-m', 'try: %s -n bug %s' % (try_syntax, bug_id)])
+        else:
+            cmd.extend(['-m', 'try: %s -n --post-to-bugzilla bug %s' \
+                    % (try_syntax, bug_id)])
     (output, err, ret) = run_hg(cmd)
     return (ret == 0, err)
 
+@retriable(retry_exceptions=(RetryException), attempts=3, sleeptime=5)
 def clone_branch(branch, branch_url):
     """
     Clone tip of the specified branch.
@@ -424,6 +441,7 @@ def clone_branch(branch, branch_url):
     except subprocess.CalledProcessError, err:
         log.error('[Clone] error cloning \'%s\' into clean repository:\n%s'
                 % (remote, err))
+        raise RetryException
         return None
     # Clone that clean repository to active and return that revision
     active = os.path.join('active')
@@ -439,6 +457,7 @@ def clone_branch(branch, branch_url):
     except subprocess.CalledProcessError, err:
         log.error('[Clone] error cloning \'%s\' into active repository:\n%s'
                 % (remote, err))
+        raise RetryException
         return None
 
     return revision
@@ -493,6 +512,7 @@ def valid_job_message(message):
                     return False
     return True
 
+@MQ.generate_callback
 def message_handler(message):
     """
     Handles all incoming messages.
@@ -535,8 +555,9 @@ def message_handler(message):
         if patch_revision:
             log.info('[Patchset] Successfully applied patchset %s'
                 % (patch_revision))
-            msg = { 'type'  : 'success',
-                    'action': 'try.push' if patchset.try_run else 'branch.push',
+            msg = { 'type'  : 'SUCCESS',
+                    'action': 'TRY.PUSH' if patchset.try_run \
+                                         else 'BRANCH.PUSH',
                     'bug_id' : patchset.bug_id,
                     'patchsetid': patchset.num,
                     'revision' : patch_revision,
@@ -544,7 +565,7 @@ def message_handler(message):
             MQ.send_message(msg, 'db')
         else:
             # error came when processing the patchset
-            msg = { 'type' : 'error', 'action' : 'patchset.apply',
+            msg = { 'type' : 'ERROR', 'action' : 'PATCHSET.APPLY',
                     'patchsetid' : patchset.num,
                     'bug_id' : patchset.bug_id,
                     'comment' : comment }
@@ -559,6 +580,7 @@ def main():
     MQ.set_host(config['mq_host'])
     MQ.set_exchange(config['mq_exchange'])
     MQ.connect()
+    MQ.declare_and_bind(config['mq_hgp_queue'], 'hgpusher')
 
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:

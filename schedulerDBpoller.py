@@ -124,10 +124,10 @@ class SchedulerDBPoller():
             # It's really complete, now check for success
             is_complete = True
             if results['total_builds'] == results['success']:
-                final_status = "success"
+                final_status = "SUCCESS"
                 log.debug("Complete and a success")
             else:
-                final_status = "failure"
+                final_status = "FAILURE"
                 log.debug("Complete and a failure")
         elif results['total_builds'] - results['warnings'] == \
                 results['success'] and results['warnings'] <= (MAX_ORANGE * 2):
@@ -174,20 +174,20 @@ class SchedulerDBPoller():
                                 final_status = "retrying"
                             except:
                                 is_complete = True
-                                final_status = "failure"
+                                final_status = "FAILURE"
             # Passed on Retry
             if retry_count != 0 and retry_pass == retry_count:
                 is_complete = True
-                final_status = "success"
+                final_status = "SUCCESS"
             # Failed on Retry
             elif retry_count != 0:
                 is_complete = True
-                final_status = "failure"
+                final_status = "FAILURE"
         else:
             # too many warnings, no point retrying builds
             log.debug("Too many warnings! Final = failure")
             is_complete = True
-            final_status = "failure"
+            final_status = "FAILURE"
 
         return is_complete, final_status
 
@@ -271,11 +271,11 @@ class SchedulerDBPoller():
                 if 'try: ' in comments:
                     if flag_check:
                         if '--post-to-bugzilla' in comments:
-                            push_type = "try"
+                            push_type = "TRY"
                     else:
-                        push_type = "try"
+                        push_type = "TRY"
                 if 'autoland-' in comments:
-                    push_type = "auto"
+                    push_type = "AUTO"
         return push_type
 
     def calculate_results(self, buildrequests):
@@ -471,7 +471,7 @@ class SchedulerDBPoller():
         # check timeout, maybe it's time to kick this out of the tracking queue
         if revision != None:
             if self.revision_timed_out(revision):
-                status['status_string'] = 'timed out'
+                status['status_string'] = 'TIMED_OUT'
                 is_complete = True
 
         return (status, is_complete)
@@ -501,9 +501,9 @@ class SchedulerDBPoller():
         bug_post = False
         posted = False
         result = False
-        action = push_type + '.run'
+        action = push_type + '.RUN'
 
-        if status_str == 'timed out':
+        if status_str == 'TIMED_OUT':
             message += "\n Timed out after %s hours without completing." \
                             % strftime('%I', gmtime(TIMEOUT))
         posted = self.bz.has_comment(message, bug)
@@ -535,7 +535,7 @@ class SchedulerDBPoller():
         elif not self.dry_run and not posted:
             # Still can't post to the bug even on time out?
             # Throw it away for now (maybe later we'll email)
-            if status_str == 'timed out' and not result:
+            if status_str == 'TIMED_OUT' and not result:
                 self.remove_cache(revision)
             else:
                 log.debug("BZ POST FAILED message: %s bug: %s, "
@@ -669,7 +669,7 @@ class SchedulerDBPoller():
                 self.remove_cache(revision)
         # Clean incomplete list of timed out build runs
         for rev in incomplete.keys():
-            if incomplete[rev]['status']['status_string'] == 'timed out':
+            if incomplete[rev]['status']['status_string'] == 'TIMED_OUT':
                 del incomplete[rev]
 
         # Store the incomplete revisions for the next run if there's a bug
@@ -688,7 +688,7 @@ if __name__ == '__main__':
     """
 
     # XXX: This should be set to logging.DEBUG if verbose flag passed
-    log.setLevel(logging.DEBUG)
+    log.setLevel(logging.INFO)
     handler = logging.handlers.RotatingFileHandler(LOGFILE,
             maxBytes=50000, backupCount=5)
     log.addHandler(handler)
@@ -769,6 +769,7 @@ if __name__ == '__main__':
             result = poller.poll_by_revision(
                     options.revision, options.flag_check)
             if options.verbose:
+                log.setLevel(logging.DEBUG)
                 log.debug("Single revision run complete: "
                         "RESULTS: %s POSTED_TO_BUG: %s"
                         % (result, result['posted_to_bug']))
