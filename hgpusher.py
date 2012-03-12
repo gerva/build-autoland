@@ -14,7 +14,7 @@ site.addsitedir('%s/../../lib/python' % (BASE_DIR))
 from util.hg import mercurial, apply_and_push, HgUtilError, \
                     update, get_revision
 from util.retry import retry, retriable
-from util.commands import run_cmd 
+from util.commands import run_cmd
 
 
 log = logging.getLogger()
