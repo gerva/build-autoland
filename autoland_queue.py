@@ -454,6 +454,7 @@ def handle_patchset(patchset):
     log.debug("Threshold for %s: %s" % (patchset.branch, b.threshold))
     if jobs < b.threshold:
         message = { 'job_type':'patchset', 'bug_id':patchset.bug_id,
+                'user':patchset.author,
                 'branch_url':branch.repo_url,
                 'branch':patchset.branch, 'try_run':patchset.try_run,
                 'try_syntax':patchset.try_syntax,

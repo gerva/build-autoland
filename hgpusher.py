@@ -123,7 +123,7 @@ class Patchset(object):
         pass
 
     def __init__(self, ps_id, bug_id, patches, try_run, push_url,
-            branch, branch_url, try_syntax=None):
+            branch, branch_url, user, try_syntax=None):
         self.num = ps_id
         self.bug_id = bug_id
         self.patches = [Patch(patch) for patch in patches]
@@ -139,6 +139,7 @@ class Patchset(object):
         self.active_repo = os.path.join('active/%s' % (branch))
         self.comment = ''
         self.setup_comment()
+        self.user = user
 
     def setup_comment(self):
         """
@@ -164,7 +165,7 @@ class Patchset(object):
             3. Apply patches, with 3 attempts
         """
         # 1. Check permissions on each patch
-        if not has_sufficient_permissions(self.patches,
+        if not has_sufficient_permissions(self.user,
                 self.branch if not self.try_run else 'try'):
             log.error('Insufficient permissions to push to %s.'
                     % (self.branch if not self.try_run else 'try'))
@@ -292,18 +293,29 @@ class Patchset(object):
         Perform an 'hg import' on each patch in the set.
         If this is a try run, use the patch.user field to commit.
         """
-        log.debug('Importing patches into %s' % (branch_dir))
-        for patch in self.patches:
-            (patch_success, err) = import_patch(branch_dir,
-                    patch.file, self.try_run, no_commit=False,
-                    bug_id=self.bug_id, user=patch.user,
-                    try_syntax=self.try_syntax)
-            if not patch_success:
-                log.error('[Patch %s] Failed to import with commit: %s'
-                        % (patch.num, err))
-                self.add_comment('Patch %s could not be applied to %s.\n%s'
-                        % (patch.num, self.branch, err))
-                raise self.RetryException
+        if try_run and False:
+            # create a null commit with try syntax
+            cmd = ['qnew', '-R', self.active_repo]
+            if config.get('staging', False):
+                cmd.extend(['-m', 'try: %s -n bug %s'
+                    % (self.try_syntax, self.bug_id)])
+            else:
+                cmd.extend(['-m', 'try: %s -n --post-to-bugzilla bug %s'
+                        % (self.try_syntax, self.bug_id)])
+            if self.user:   # user only set if it's required.
+                cmd.extend(['-u', self.user])
+            cmd.append('null')
+            (output, err, ret) = run_hg(cmd)
+            if ret != 0:
+                log.error('Unable to create null commit: %s' % (err))
+                raise RetryException
+
+        cmd = ['qfinish', '-a']
+        (output, err, ret) = run_hg(cmd)
+        if ret != 0:
+            log.error('Unable to qfinish the patch queue: %s\nRetrying.'
+                    % (err))
+            raise RetryException
 
 
 def run_hg(hg_args):
@@ -351,36 +363,19 @@ def in_ldap_group(email, group):
     """
     Checks ldap if either email or the bz_email are a member of the group.
     """
+    if LDAP.is_member_of_group(email, group):
+        return True
     bz_email = LDAP.get_bz_email(email)
-    return LDAP.is_member_of_group(email, group) \
-            or (bz_email and LDAP.is_member_of_group(bz_email, group))
+    return (bz_email and LDAP.is_member_of_group(bz_email, group))
 
-def has_sufficient_permissions(patches, branch):
+def has_sufficient_permissions(user_email, branch):
     """
-    Searches LDAP to see if any of the users (author, reviewers) have
-    sufficient LDAP permissions.
-    These permissions are done on a whole for the patchset, so
-    if any patch is missing those permissions the whole patchset
-    cannot be pushed.
+    Searches LDAP to see if if the flagging user has sufficient LDAP perms.
     """
     group = LDAP.get_branch_permissions(branch)
     if group == None:
         return False
-
-    for patch in patches:
-        found = False
-        if in_ldap_group(patch.author_email, group):
-            continue    # next patch
-        for review in patch.reviews:
-            if not review.get('reviewer'):
-                continue
-            if in_ldap_group(review['reviewer'], group):
-                found = True
-                break   # next patch
-        if not found:
-            return False
-
-    return True
+    return in_ldap_group(user_email, group)
 
 def import_patch(repo, patch, try_run, no_commit=False, bug_id=None, user=None,
         try_syntax="-b do -p all -u none -t none"):
@@ -533,7 +528,8 @@ def message_handler(message):
                         bool(data['try_run']),
                         data['push_url'],
                         data['branch'], data['branch_url'],
-                        data.get('try_syntax', None))
+                        data['user'],
+                        data.get('try_syntax'))
 
         (patch_revision, comment) = patchset.process()
         if patch_revision:
