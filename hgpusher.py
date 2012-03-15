@@ -303,7 +303,7 @@ class Patchset(object):
         Perform an 'hg import' on each patch in the set.
         If this is a try run, use the patch.user field to commit.
         """
-        if try_run and False:
+        if try_run:
             # create a null commit with try syntax
             cmd = ['qnew', '-R', self.active_repo]
             if config.get('staging', False):
@@ -403,24 +403,12 @@ def import_patch(repo, patch, try_run, bug_id, user=None,
     (output, err, ret) = run_hg(cmd)
     if ret != 0:
         return (ret == 0, err)
-# XXX
-# XXX Should we qrefresh in a user for each patch?
-# XXX
+
     cmd = ['qrefresh', '-R', repo]
     # if a user field specified, qrefesh that name in there
     if user:
         cmd.extend(['-u', user])
 
-    if try_syntax == None:
-        try_syntax = ''
-    if try_run:
-        # if there is no try_syntax,
-        # try defaults will be triggered by 'try:'
-        if config.get('staging', False):
-            cmd.extend(['-m', 'try: %s -n bug %s' % (try_syntax, bug_id)])
-        else:
-            cmd.extend(['-m', 'try: %s -n --post-to-bugzilla bug %s' \
-                    % (try_syntax, bug_id)])
     (output, err, ret) = run_hg(cmd)
     return (ret == 0, err)
 
