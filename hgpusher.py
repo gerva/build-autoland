@@ -289,7 +289,7 @@ class Patchset(object):
             # 3. patch applies using 'qimport; qpush'
             (patch_success, err) = import_patch(self.active_repo,
                     patch.file, self.try_run, user=patch.user,
-                    try_syntax=self.try_syntax)
+                    try_syntax=self.try_syntax, bug_id=self.bug_id)
             if not patch_success:
                 log.error('[Patch %s] could not verify import:\n%s'
                         % (patch.num, err))
@@ -387,7 +387,7 @@ def has_sufficient_permissions(user_email, branch):
         return False
     return in_ldap_group(user_email, group)
 
-def import_patch(repo, patch, try_run, bug_id=None, user=None,
+def import_patch(repo, patch, try_run, bug_id, user=None,
         try_syntax="-b do -p all -u none -t none"):
     """
     Import patch file patch into a mercurial queue.

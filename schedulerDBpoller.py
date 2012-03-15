@@ -1,8 +1,8 @@
 try:
-    import simplejson as json
-except ImportError:
     import json
-import sys, os, traceback, urllib2, urllib
+except ImportError:
+    import simplejson as json
+import sys, os, traceback, urllib2, urllib, re
 from time import time, strftime, strptime, localtime, mktime, gmtime
 from argparse import ArgumentParser
 from utils.db_handler import DBHandler
@@ -12,7 +12,9 @@ import utils.mq_utils as mq_utils
 import logging, logging.handlers
 from mercurial import lock, error
 
-FORMAT = '%(asctime)s - %(module)s - %(funcName)s - %(message)s'
+# sets up a rotating logfile that's written to the working dir
+log = logging.getLogger()
+FORMAT = "%(asctime)s - %(module)s - %(funcName)s - %(message)s"
 LOGFILE = 'schedulerDBpoller.log'
 POSTED_BUGS = 'postedbugs.log'
 POLLING_INTERVAL = 14400 # 4 hours
@@ -23,10 +25,9 @@ MAX_ORANGE = 2
 
 # console logging, formatted
 logging.basicConfig(format=FORMAT)
-# sets up a rotating logfile that's written to the working dir
-log = logging.getLogger(LOGFILE)
 
 class SchedulerDBPoller():
+
     def __init__(self, branch, cache_dir, config,
                 user=None, password=None, dry_run=False,
                 verbose=False, messages=True):
@@ -49,8 +50,9 @@ class SchedulerDBPoller():
         # Set up bugzilla api connection
         self.bz_url = self.config.get('bz', 'url')
         self.bz = bz_utils.bz_util(self.config.get('bz', 'api_url'),
-                        None, self.config.get('bz', 'username'),
-                        self.config.get('bz', 'password'))
+                self.config.get('bz', 'url'),
+                None, self.config.get('bz', 'username'),
+                self.config.get('bz', 'password'))
 
         # Set up Self-Serve API
         self.self_serve_api_url = self.config.get('self_serve', 'url')
@@ -65,10 +67,10 @@ class SchedulerDBPoller():
             self.password = self.config.get('self_serve', 'password')
 
         # Set up database handler
-        self.scheduler_db = DBHandler(self.config.get('databases',
-                                'scheduler_db_url'))
+        self.scheduler_db = DBHandler(
+                self.config.get('databases', 'scheduler_db_url'))
 
-    def revision_timed_out(self, revision, timeout=TIMEOUT):
+    def revisionTimedOut(self, revision, timeout=TIMEOUT):
         """
         Read the cache file for revision and return if the build has timed out
         """
@@ -77,28 +79,23 @@ class SchedulerDBPoller():
         if self.verbose:
             log.debug("Checking for timed out revision: %s" % revision)
         filename = os.path.join(self.cache_dir, revision)
-        print "Opening file: %s" % (filename)
-        try:
-            with open(filename, 'r') as f_in:
-                entries = f_in.readlines()
-        except IOError:
-            log.error("Couldn't open cache file for rev: %s" % revision)
-            return False
-
-        try:
-            first_entry = mktime(strptime(entries[0].split('|')[0],
-                            "%a, %d %b %Y %H:%M:%S %Z"))
-        except (OverflowError, ValueError), err:
-            log.error("Couldn't format time for entry: %s" % err)
-            raise
-
-        diff = now - first_entry
-        if diff > timeout:
-            log.debug("Timeout on rev: %s " % revision)
-            timed_out = True
+        if os.path.exists(filename):
+            try:
+                f = open(filename, 'r')
+                entries = f.readlines()
+                f.close()
+            except IOError, e:
+                log.error("Couldn't open cache file for rev: %s" % revision)
+                raise
+            first_entry = mktime(strptime(
+                    entries[0].split('|')[0], "%a, %d %b %Y %H:%M:%S %Z"))
+            diff = now - first_entry
+            if diff > timeout:
+                log.debug("Timeout on rev: %s " % revision)
+                timed_out = True
         return timed_out
 
-    def orange_factor_handling(self, buildrequests):
+    def OrangeFactorHandling(self, buildrequests):
         """
         Checks buildrequests results.
         If all success except # warnings is <= MAX_ORANGE
@@ -108,70 +105,69 @@ class SchedulerDBPoller():
               buildernames's buildid
             * If yes, check the results of the pair and report back
               success/fail based on:
-                  orange:green == Success, intermittent orange
-                  orange:orange == Failed on retry
+                orange:green == Success, intermittent orange
+                orange:orange == Failed on retry
+
         returns:
             is_complete {True,False}
-            final_status {'success', 'failure', None}
+            final_status {'SUCCESS', 'FAILURE', None}
         """
         is_complete = None
         final_status = None
-        results = self.calculate_results(buildrequests)
-        log.debug("RESULTS (orange_factor_handling): %s" % results)
+        results = self.CalculateResults(buildrequests)
+        if self.verbose:
+            log.debug("RESULTS (OrangeFactorHandling): %s" % results)
         if results['total_builds'] == results['success'] + \
                 results['failure'] + results['other'] + \
                 results['skipped'] + results['exception']:
             # It's really complete, now check for success
-            is_complete = True
             if results['total_builds'] == results['success']:
+                is_complete = True
                 final_status = "SUCCESS"
-                log.debug("Complete and a success")
+                if self.verbose:
+                    log.debug("Complete and a success")
             else:
+                is_complete = True
                 final_status = "FAILURE"
-                log.debug("Complete and a failure")
-        elif results['total_builds'] - results['warnings'] == \
-                results['success'] and results['warnings'] <= (MAX_ORANGE * 2):
-            # MAX_ORANGE * 2 since on retries, original warnings still counted.
-            # The list of oranges it to be compared to previous
-
+                if self.verbose:
+                    log.debug("Complete and a failure")
+        elif results['total_builds'] - results['warnings'] == results['success'] and results['warnings'] <= (MAX_ORANGE * 2):
             # Get buildernames where result was warnings
             buildernames = {}
             for value in buildrequests.values():
                 br = value.to_dict()
                 # Collect duplicate buildernames
-                if not br['buildername'] in buildernames:
-                    buildernames[br['buildername']] = [(br['results_str'],
-                        br['branch'], br['bid'])]
+                if not buildernames.has_key(br['buildername']):
+                    buildernames[br['buildername']] = [(br['results_str'], br['branch'], br['bid'])]
                 else:
-                    buildernames[br['buildername']].append(
-                            (br['results_str'], br['branch'], br['bid']))
+                    buildernames[br['buildername']].append((br['results_str'], br['branch'], br['bid']))
             retry_count = 0
             retry_pass = 0
             for name, info in buildernames.items():
-                # If we have more than one result for a builder name,
-                # compare the results
-                if len(info) > 1:
-                    log.debug("WE HAVE A DUPE: %s" % name)
+                # If we have more than one result for a builder name, compare the results
+                if len(info) == 2:
+                    if self.verbose:
+                        log.debug("WE HAVE A DUPE: %s" % name)
                     retry_count += 1
-                    c =  zip(info[0], info[1])
+                    c =  zip(info[0],info[1])
                     if len(set(c[0])) > 1:
-                        log.debug("We have a mismatch in %s"
-                                % set(c[0]))
+                        if self.verbose:
+                            log.debug("We have a mismatch in %s" % set(c[0]))
                         # We have a mismatch of results - is one a success?
                         if 'success' in c[0]:
-                            log.debug("There's a success, "
-                                      "incrementing retry_pass")
+                            if self.verbose:
+                                log.debug("There's a success, incrementing retry_pass")
                             retry_pass += 1
                 # Unique buildername with warnings, attempt a rebuild
                 else:
                     for result, branch, bid in info:
                         if result == 'warnings':
-                            log.debug("Attempting to retry branch: "
-                                      "%s bid: %s" % (branch, bid))
+                            if self.verbose:
+                                log.debug("Attempting to retry branch: %s bid: %s" % (branch, bid))
                             try:
-                                post = self.self_serve_rebuild(bid)
+                                post = self.SelfServeRebuild(bid)
                                 is_complete = False
-                                final_status = "retrying"
+                                final_status = "RETRYING"
                             except:
                                 is_complete = True
                                 final_status = "FAILURE"
@@ -185,16 +181,17 @@ class SchedulerDBPoller():
                 final_status = "FAILURE"
         else:
             # too many warnings, no point retrying builds
-            log.debug("Too many warnings! Final = failure")
+            if self.verbose:
+                log.debug("Too many warnings! Final = failure")
             is_complete = True
             final_status = "FAILURE"
 
         return is_complete, final_status
 
-    def self_serve_rebuild(self, buildid):
+    def SelfServeRebuild(self, buildid):
         """
-        Uses self-serve API to retrigger the buildid/branch
-        sent in with a POST request
+        Uses self-serve API to retrigger the buildid/branch sent in
+        with a POST request
         """
         password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
         password_mgr.add_password(None,
@@ -204,9 +201,9 @@ class SchedulerDBPoller():
         auth_handler = urllib2.HTTPBasicAuthHandler(password_mgr)
         opener = urllib2.build_opener(auth_handler, urllib2.HTTPSHandler())
         opener.addheaders = [
-            ('Content-Type', 'application/json'),
-            ('Accept', 'application/json'),
-        ]
+         ('Content-Type', 'application/json'),
+         ('Accept', 'application/json'),
+         ]
         urllib2.install_opener(opener)
         data = urllib.urlencode({"build_id": buildid})
         url = self.self_serve_api_url + "/" + self.branch
@@ -214,52 +211,52 @@ class SchedulerDBPoller():
             req = urllib2.Request(url, data)
             req.method = "POST"
             return json.loads(opener.open(req).read())
-        except urllib2.HTTPError, err:
+        except urllib2.HTTPError, e:
             log.debug("FAIL attempted rebuild for %s:%s -- %s"
-                    % (self.branch, buildid, err))
+                    % (self.branch, buildid, e))
             raise
         except ValueError, err:
             log.debug("FAILED to load json result for %s:%s -- %s"
                     % (self.branch, buildid, err))
+            raise
 
-    def get_single_author(self, buildrequests):
+    def GetSingleAuthor(self, buildrequests):
         """
         Look through a list of buildrequests and return only one author
         from the changes if one exists
         """
         author = None
         for value in buildrequests.values():
-            br = value.to_dict()
-            if author == None:
-                author = br['authors']
+          br = value.to_dict()
+          if author == None:
+              author = br['authors']
         # if there's one author return it
         if len(author) == 1:
             return author[0]
         elif author:
             log.error("More than one author for: %s" % br)
 
-    def get_bug_numbers(self, buildrequests):
+    def GetBugNumbers(self, buildrequests):
         """
-        Look through a list of buildrequests and return bug number
-        from push comments.
+        Look through a list of buildrequests and return bug
+        number from push comments
         """
         bugs = []
         for value in buildrequests.values():
             br = value.to_dict()
             for comment in br['comments']:
                 # we only want the bug specified in try syntax
-                if 'try: ' in comment:
+                if len(comment.split('try: ')) > 1:
                     comment = comment.split('try: ')[1]
                     bugs = self.bz.bugs_from_comments(comment)
         return bugs
 
-    def process_push_type(self, revision, buildrequests, flag_check=True):
+    def ProcessPushType(self, revision, buildrequests, flag_check=True):
         """
         Search buildrequest comments for try syntax and query autoland_db
-
-        returns type as "try", "auto", or None
-            try: if "try: --post-to-bugzilla" is present in the comments
-                 of a buildrequest
+        returns type as "TRY", "AUTO", or None
+            try: if "try: --post-to-bugzilla" is present in the
+                 comments of a buildrequest
             auto: if a check for 'autoland-' in the comments returns True
                   (for future branch landings)
             None: if not try request and Autoland system isn't tracking it
@@ -278,11 +275,10 @@ class SchedulerDBPoller():
                     push_type = "AUTO"
         return push_type
 
-    def calculate_results(self, buildrequests):
+    def CalculateResults(self, buildrequests):
         """
-        Returns dictionary of the results for the buildrequests passed in.
+        Returns dictionary of the results for the buildrequests passed in
         """
-
         results = {
             'success': 0,
             'warnings': 0,
@@ -302,11 +298,10 @@ class SchedulerDBPoller():
         results['total_builds'] = sum(results.values())
         return results
 
-    def generate_result_report_message(self, revision, report, author=None):
-        """
-        Returns formatted message of revision report.
-        """
-        log.debug("REPORT: %s" % report)
+    def GenerateResultReportMessage(self, revision, report, author=None):
+        """ Returns formatted message of revision report"""
+        if self.verbose:
+            log.debug("REPORT: %s" % report)
 
         message = "Try run for %s is complete.\n" \
                   "Detailed breakdown of the results available here:\n" \
@@ -318,52 +313,50 @@ class SchedulerDBPoller():
             if value > 0 and key != 'total_builds':
                 message += "    %s: %d\n" % (key, value)
         if author:
-            message += "Builds (or logs if builds failed) available at:\n" \
-                       "http://ftp.mozilla.org/pub/mozilla.org/firefox/" \
-                       "try-builds/%s-%s" % (author, revision)
+            message += "Builds (or logs if builds failed) available at:\n"\
+                        "http://ftp.mozilla.org/pub/mozilla.org/firefox/"\
+                        "try-builds/%s-%s""" % (author, revision)
         return message
 
-    def write_to_buglist(self, revision, bug, filename=POSTED_BUGS):
+    def WriteToBuglist(self, revision, bug, filename=POSTED_BUGS):
         """
         Writes a bug #, timestamp, and build's info to the BUGLIST to
-        track what has been posted.
-        Also calls remove_cache on the revision once it's been posted.
+        track what has been posted
+        Also calls RemoveCache on the revision once it's been posted
         """
         if self.dry_run:
             log.debug("DRY_RUN: WRITING TO %s: %s" % (filename, revision))
         else:
             try:
-                with open(filename, 'a') as f_out:
-                    f_out.write("%s|%s|%d|%s\n" % (bug, revision, time(),
-                        strftime("%a, %d %b %Y %H:%M:%S %Z", localtime())))
-                log.debug("WROTE TO %s: %s" % (filename, revision))
-                self.remove_cache(revision)
-            except IOError, err:
-                log.error("Encountered error while writing bug list: %s" % err)
+                f = open(filename, 'a')
+                f.write("%s|%s|%d|%s\n" % (bug, revision, time(),
+                    strftime("%a, %d %b %Y %H:%M:%S %Z", localtime())))
+                f.close()
+                if self.verbose:
+                    log.debug("WROTE TO %s: %s" % (filename, revision))
+                self.RemoveCache(revision)
+            except:
                 traceback.print_exc(file=sys.stdout)
 
-    def remove_cache(self, revision):
+    def RemoveCache(self, revision):
         # attach '.done' to the cache file so we're not tracking it anymore
         # delete original cache file
         cache_file = os.path.join(self.cache_dir, revision)
         log.debug("MOVING %s CACHE FILE to %s"
                 % (cache_file, cache_file + '.done'))
-        try:
+        if os.path.exists(cache_file):
             os.rename(cache_file, cache_file + '.done')
-            os.remove(cache_file)
-        except OSError, err:
-            log.error("Error while removing cache revision %s:%s -- %s"
-                        % (revision, cache_file, err))
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
 
-    def load_cache(self):
+    def LoadCache(self):
         """
-        Search for cache dir, return dict of all filenames (revisions) in the
-        dir and a list of completed revisions to knock out of poll run
+        Search for cache dir, return dict of all filenames (revisions)
+        in the dir and a list of completed revisions to knock out of poll run
         """
         revisions = {}
         completed_revisions = []
         log.debug("Scanning cache files...")
-
         if os.path.isdir(self.cache_dir):
             cache_revs = os.listdir(self.cache_dir)
             for revision in cache_revs:
@@ -374,10 +367,10 @@ class SchedulerDBPoller():
 
         return revisions, completed_revisions
 
-    def write_to_cache(self, incomplete):
+    def WriteToCache(self, incomplete):
         """
-        Writes results of incomplete build to cache dir in a file that is
-        named with the revision
+        Writes results of incomplete build to cache dir in a file that
+        is named with the revision
         """
         try:
             assert isinstance(incomplete, dict)
@@ -387,36 +380,34 @@ class SchedulerDBPoller():
 
         if not os.path.isdir(self.cache_dir):
             if not self.dry_run:
-                try:
-                    os.mkdir(self.cache_dir)
+                os.mkdir(self.cache_dir)
+                if self.verbose:
                     log.debug("CREATED DIR: %s" % self.cache_dir)
-                except OSError, err:
-                    log.error("Could not create cache dir %s -- %s"
-                                % (self.cache_dir, err))
-                    raise
             else:
                 log.debug("DRY RUN: WOULD CREATE DIR: %s" % self.cache_dir)
 
         for revision, results in incomplete.items():
             filename = os.path.join(self.cache_dir, revision)
             if self.dry_run:
-                log.debug("DRY RUN: WOULD WRITE TO %s: %s|%s\n" % (filename,
-                    strftime("%a, %d %b %Y %H:%M:%S %Z", localtime()),
-                    results))
+                log.debug("DRY RUN: WOULD WRITE TO %s: %s|%s\n"
+                        % (filename, strftime("%a, %d %b %Y %H:%M:%S %Z",
+                           localtime()), results))
             else:
                 try:
-                    with open(filename, 'a') as f_out:
-                        f_out.write("%s|%s\n"
-                                % (strftime("%a, %d %b %Y %H:%M:%S %Z",
+                    f = open(filename, 'a')
+                    f.write("%s|%s\n" % (strftime("%a, %d %b %Y %H:%M:%S %Z",
+                        localtime()), results))
+                    if self.verbose:
+                        log.debug("WROTE TO %s: %s|%s\n"
+                                % (filename,
+                                   strftime("%a, %d %b %Y %H:%M:%S %Z",
                                    localtime()), results))
-                    log.debug("WROTE TO %s: %s|%s\n" % (filename,
-                        strftime("%a, %d %b %Y %H:%M:%S %Z", localtime()),
-                        results))
-                except IOError:
+                    f.close()
+                except:
                     log.error(traceback.print_exc(file=sys.stdout))
                     raise
 
-    def calculate_build_request_status(self, buildrequests, revision=None):
+    def CalculateBuildRequestStatus(self, buildrequests, revision=None):
         """
         Accepts buildrequests and calculates their results, calls
         orange_factor_handling to ensure completeness of results, makes sure
@@ -442,7 +433,7 @@ class SchedulerDBPoller():
             'status_string': "",
         }
         for value in buildrequests.values():
-            status['total_builds'] += 1
+            status['total_builds'] +=1
             br = value.to_dict()
             if br['status_str'].lower() in status.keys():
                 status[br['status_str'].lower()] += 1
@@ -456,29 +447,29 @@ class SchedulerDBPoller():
                 br = value.to_dict()
                 if br['finish_time']:
                     timeout_complete.append(
-                        (time() - br['finish_time']) > COMPLETION_THRESHOLD)
+                            time() - br['finish_time'] > COMPLETION_THRESHOLD)
                 for passed_timeout in timeout_complete:
                     if not passed_timeout:
                         # we'll wait a bit and make sure no tests are coming
                         is_complete = False
                         break
             if is_complete:
-                # one more check before it's _really complete_
-                # any oranges to retry?
-                log.debug("Check Orange Factor for rev: %s" % revision)
+                # one more check before it's _really complete_ - any oranges to retry?
+                if self.verbose:
+                    log.debug("Check Orange Factor for rev: %s" % revision)
                 is_complete, status['status_string'] = \
-                        self.orange_factor_handling(buildrequests)
+                        self.OrangeFactorHandling(buildrequests)
         # check timeout, maybe it's time to kick this out of the tracking queue
         if revision != None:
-            if self.revision_timed_out(revision):
+            if self.revisionTimedOut(revision):
                 status['status_string'] = 'TIMED_OUT'
                 is_complete = True
 
-        return (status, is_complete)
+        return (status,is_complete)
 
-    def get_revisions(self, starttime=None, endtime=None):
+    def GetRevisions(self, starttime=None, endtime=None):
         """
-        Gets the buildrequests between starttime & endtime
+        Gets the buildrequests between starttime & endtime,
         returns a dict keyed by revision with the buildrequests per revision
         """
         rev_dict = {}
@@ -488,30 +479,29 @@ class SchedulerDBPoller():
             # group buildrequests by revision
             br = value.to_dict()
             revision = br['revision']
-            if not revision in rev_dict:
+            if not rev_dict.has_key(revision):
                 rev_dict[revision] = {}
         return rev_dict
 
-    def process_completed_revision(self, revision, message,
-            bug, status_str, push_type):
+    def ProcessCompletedRevision(self, revision, message,
+                                 bug, status_str, run_type):
         """
         Posts to bug and sends msg to autoland mq with completion status
         """
-
         bug_post = False
-        posted = False
+        dupe = False
         result = False
-        action = push_type + '.RUN'
+        action = run_type + '.RUN'
 
         if status_str == 'TIMED_OUT':
-            message += "\n Timed out after %s hours without completing." \
-                            % strftime('%I', gmtime(TIMEOUT))
+            message += "\n Timed out after %s hours without completing." % strftime('%I', gmtime(TIMEOUT))
+
         posted = self.bz.has_comment(message, bug)
 
         if posted:
             log.debug("NOT POSTING TO BUG %s, ALREADY POSTED" % bug)
-            posted = True
-            self.remove_cache(revision)
+            dupe = True
+            self.RemoveCache(revision)
         else:
             if self.dry_run:
                 log.debug("DRY_RUN: Would post to %s%s" % (self.bz_url, bug))
@@ -521,7 +511,7 @@ class SchedulerDBPoller():
                         % (push_type, revision))
                 result = self.bz.notify_bug(message, bug)
         if result:
-            self.write_to_buglist(revision, bug)
+            self.WriteToBuglist(revision, bug)
             log.debug("BZ POST SUCCESS result: %s bug: %s%s"
                     % (result, self.bz_url, bug))
             bug_post = True
@@ -532,24 +522,24 @@ class SchedulerDBPoller():
                         'revision': revision }
                 self.mq.send_message(msg, routing_key='db')
 
-        elif not self.dry_run and not posted:
+        elif not self.dry_run and not dupe:
             # Still can't post to the bug even on time out?
             # Throw it away for now (maybe later we'll email)
             if status_str == 'TIMED_OUT' and not result:
-                self.remove_cache(revision)
+                self.RemoveCache(revision)
             else:
                 log.debug("BZ POST FAILED message: %s bug: %s, "
-                        "couldn't notify bug. Try again later."
-                        % (message, bug))
+                          "couldn't notify bug. Try again later."
+                          % (message, bug))
         return bug_post
 
-    def poll_by_revision(self, revision, flag_check=False):
+    def PollByRevision(self, revision, flag_check=False):
         """
         Run a single revision through the polling process to determine if it is
-        complete, or not.
-        returns information on the revision in a dict which includes the
-        message that can be posted to a bug, whether the message was
-        successfully posted, and the current status of the builds
+        complete, or not, returns information on the revision in a dict which
+        includes the message that can be posted to a bug
+        (if not in dryrun mode), whether the message was successfully posted,
+        and the current status of the builds
         """
         info = {
             'message': None,
@@ -558,26 +548,26 @@ class SchedulerDBPoller():
             'is_complete': False,
             'discard': False,
         }
-        buildrequests = self.scheduler_db.GetBuildRequests(
-                revision, self.branch)
-        push_type = self.process_push_type(revision, buildrequests, flag_check)
-        bugs = self.get_bug_numbers(buildrequests)
-        info['status'], info['is_complete'] = \
-                self.calculate_build_request_status(buildrequests, revision)
+        buildrequests = self.scheduler_db.GetBuildRequests(revision, self.branch)
+        build_type = self.ProcessPushType(revision, buildrequests, flag_check)
+        bugs = self.GetBugNumbers(buildrequests)
+        info['status'], info['is_complete'] = self.CalculateBuildRequestStatus(buildrequests, revision)
+        if self.verbose:
+            log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s TYPE: %s IS_COMPLETE: %s" % (info['status'], bugs, type, info['is_complete']))
         log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s "
                 "TYPE: %s IS_COMPLETE: %s"
                 % (info['status'], bugs, push_type, info['is_complete']))
         if info['is_complete'] and len(bugs) > 0:
-            results = self.calculate_results(buildrequests)
-            info['message'] = self.generate_result_report_message(revision,
-                    results, self.get_single_author(buildrequests))
-            log.debug("POLL_BY_REVISION: MESSAGE: %s" % info['message'])
+            results = self.CalculateResults(buildrequests)
+            info['message'] = self.GenerateResultReportMessage(revision, results, self.GetSingleAuthor(buildrequests))
+            if self.verbose:
+                log.debug("POLL_BY_REVISION: MESSAGE: %s" % info['message'])
             for bug in bugs:
-                if info['message'] and not self.dry_run:
-                    info['posted_to_bug'] = self.process_completed_revision(
-                            revision=revision, message=info['message'],
-                            bug=bug, push_type=push_type,
-                            status_str=info['status']['status_string'])
+                if info['message'] != None and self.dry_run == False:
+                    info['posted_to_bug'] = self.ProcessCompletedRevision(revision=revision, 
+                                                    message=info['message'], bug=bug, 
+                                                    status_str=info['status']['status_string'], 
+                                                    type=type)
                 elif self.dry_run:
                     log.debug("DRY RUN: Would have posted %s to %s"
                             % (info['message'], bug))
@@ -587,26 +577,27 @@ class SchedulerDBPoller():
             log.debug("Nothing to do here for %s" % revision)
             info['discard'] = True
         else:
-            if bugs and not self.dry_run:
+            if bugs != None and not self.dry_run:
                 # Cache it
                 log.debug("Writing %s to cache" % revision)
                 incomplete = {}
                 incomplete[revision] = info['status']
-                self.write_to_cache(incomplete)
+                self.WriteToCache(incomplete)
             else:
                 info['discard'] = True
         return info
 
-    def poll_by_time_range(self, starttime, endtime):
+    def PollByTimeRange(self, starttime, endtime):
         # Get all the unique revisions in the specified timeframe range
-        rev_report = self.get_revisions(starttime, endtime)
+        rev_report = self.GetRevisions(starttime,endtime)
         # Check the cache for any additional revisions to pull reports for
-        revisions, completed_revisions = self.load_cache()
-        log.debug("INCOMPLETE REVISIONS IN CACHE %s" % (revisions))
+        revisions, completed_revisions = self.LoadCache()
+        if self.verbose:
+            log.debug("INCOMPLETE REVISIONS IN CACHE %s" % (revisions))
         rev_report.update(revisions)
         # Clear out complete revisions from the rev_report keys
         for rev in completed_revisions:
-            if 'rev' in rev_report:
+            if rev_report.has_key(rev):
                 log.debug("Removing %s from the revisions to poll, "
                           "it's been done." % rev)
                 del rev_report[rev]
@@ -638,8 +629,8 @@ class SchedulerDBPoller():
         # Process the completed rev_report for this run
         # gather incomplete revisions and writing to cache
         incomplete = {}
-        for revision, info in rev_report.items():
-            # Add incomplete builds with bugs to a dict for re-checking later
+        for revision,info in rev_report.items():
+            # Incomplete builds that have bugs get added to dict for re-checking later
             if not info['is_complete']:
                 if len(info['bugs']) == 1:
                     incomplete[revision] = {'status': info['status'],
@@ -650,30 +641,31 @@ class SchedulerDBPoller():
             if info['is_complete'] and \
                     info['push_type'] != None and len(info['bugs']) == 1:
                 bug = info['bugs'][0]
-                if not self.process_completed_revision(revision,
-                              rev_report[revision]['message'],
-                              bug,
-                              rev_report[revision]['status']['status_string'],
-                              info['push_type']):
+                if not self.ProcessCompletedRevision(revision,
+                                      rev_report[revision]['message'],
+                                      bug,
+                                      rev_report[revision]['status']['status_string'], 
+                                      info['push_type']):
                     # If bug post didn't happen put it back
                     # (once per revision) into cache to try again later
-                    if not revision in incomplete:
+                    if not incomplete.has_key(revision):
                         incomplete[revision] = {'status': info['status'],
                                                 'bugs': info['bugs'],
                                                 }
             # Complete but to be discarded
             elif info['is_complete']:
-                log.debug("Nothing to do for push_type:%s revision:%s - "
-                          "no one cares about it"
+                if self.verbose:
+                    log.debug("Nothing to do for push_type:%s revision:%s - "
+                              "no one cares about it"
                               % (info['push_type'], revision))
-                self.remove_cache(revision)
+                self.RemoveCache(revision)
         # Clean incomplete list of timed out build runs
         for rev in incomplete.keys():
             if incomplete[rev]['status']['status_string'] == 'TIMED_OUT':
                 del incomplete[rev]
 
         # Store the incomplete revisions for the next run if there's a bug
-        self.write_to_cache(incomplete)
+        self.WriteToCache(incomplete)
 
         return incomplete
 
@@ -682,15 +674,14 @@ if __name__ == '__main__':
     Poll the schedulerdb for all the buildrequests of a certain timerange or a
     single revision. Determine the results of that revision/timerange's
     buildsets and then posts to the bug with results for any that are complete
-    (if it's a try-syntax push, then checks for --post-to-bugzilla flag).
-    Any revision(s) builds that are not complete are written to a cache file
-    named by revision for checking again later.
+    (if it's a try-syntax push, then checks for --post-to-bugzilla flag). Any
+    revision(s) builds that are not complete are written to a cache file named
+    by revision for checking again later.
     """
 
-    # XXX: This should be set to logging.DEBUG if verbose flag passed
     log.setLevel(logging.INFO)
     handler = logging.handlers.RotatingFileHandler(LOGFILE,
-            maxBytes=50000, backupCount=5)
+                    maxBytes=50000, backupCount=5)
     log.addHandler(handler)
 
     parser = ArgumentParser()
@@ -721,7 +712,7 @@ if __name__ == '__main__':
                         help="unix timestamp to poll until")
     parser.add_argument("-n", "--dry-run",
                         dest="dry_run",
-                        help="flag for turning off posting to bugzilla",
+                        help="flag to turn off actually posting to bugzilla",
                         action='store_true')
     parser.add_argument("-v", "--verbose",
                         dest="verbose",
@@ -736,7 +727,7 @@ if __name__ == '__main__':
                         action='store_false')
     parser.add_argument("--flag-check",
                         dest="flag_check",
-                        help="toggle for checking if --post-to-bugzilla "
+                        help="toggle for checking if --post-to-bugzilla "\
                              "is in the build's comments",
                         action='store_true')
     parser.set_defaults(
@@ -758,16 +749,13 @@ if __name__ == '__main__':
 
     lock_file = None
     try:
-        lock_file = lock.lock(os.path.join(os.getcwd(),
-                    '.schedulerDbPoller.lock'), timeout=1)
+        lock_file = lock.lock(os.path.join(os.getcwd(), '.schedulerDbPoller.lock'), timeout=1)
 
         if options.revision:
-            poller = SchedulerDBPoller(branch=options.branch,
-                    cache_dir=options.cache_dir, config=options.config,
-                    user=options.user, password=options.password,
-                    dry_run=options.dry_run, verbose=options.verbose)
-            result = poller.poll_by_revision(
-                    options.revision, options.flag_check)
+            poller = SchedulerDBPoller(branch=options.branch, cache_dir=options.cache_dir, config=options.config, 
+                                        user=options.user, password=options.password, dry_run=options.dry_run, 
+                                        verbose=options.verbose)
+            result = poller.PollByRevision(options.revision, options.flag_check)
             if options.verbose:
                 log.setLevel(logging.DEBUG)
                 log.debug("Single revision run complete: "
@@ -776,7 +764,7 @@ if __name__ == '__main__':
         else:
             if options.starttime > time():
                 log.debug("Starttime %s must be earlier than the "
-                        "current time %s" % (options.starttime, localtime()))
+                          "current time %s" % (options.starttime, localtime()))
                 sys.exit(1)
             elif options.endtime < options.starttime:
                 log.debug("Endtime %s must be later than the starttime %s"
@@ -784,24 +772,23 @@ if __name__ == '__main__':
                 sys.exit(1)
             elif options.endtime - options.starttime > MAX_POLLING_INTERVAL:
                 log.debug("Too large of a time interval between start and "
-                        "end times, please try a smaller polling interval")
+                          "end times, please try a smaller polling interval")
                 sys.exit(1)
             else:
-                poller = SchedulerDBPoller(branch=options.branch,
-                                cache_dir=options.cache_dir,
-                                config=options.config,
-                                user=options.user, password=options.password,
-                                dry_run=options.dry_run,
-                                verbose=options.verbose,
-                                messages=options.messages)
-                incomplete = poller.poll_by_time_range(
-                                options.starttime, options.endtime)
+                poller = SchedulerDBPoller(
+                            branch=options.branch,
+                            cache_dir=options.cache_dir, config=options.config,
+                            user=options.user, password=options.password,
+                            dry_run=options.dry_run, verbose=options.verbose,
+                            messages=options.messages)
+                incomplete = poller.PollByTimeRange(options.starttime,
+                                                    options.endtime)
                 if options.verbose:
                     log.debug("Time range run complete: INCOMPLETE %s"
-                                % incomplete)
+                            % incomplete)
     except error.LockHeld:
         print "There is an instance of SchedulerDbPoller running already."
-        print "If you're sure that it' not running, delete %s and try again." \
+        print "If you're sure that it isn't running, delete %s and try again."\
                 % (os.path.join(os.getcwd(), '.schedulerDbPoller.lock'))
         sys.exit(1)
     finally:

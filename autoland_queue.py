@@ -266,6 +266,7 @@ def message_handler(message):
         }
     """
     msg = message['payload']
+    log.info('Received message:\n%s' % (message))
     if not 'type' in msg:
         log.error('Got bad mq message: %s' % (msg))
         return
@@ -536,7 +537,6 @@ def main():
                 MQ.purge_queue(config['mq_autoland_queue'], prompt=True)
                 exit(0)
 
-    endtime = time.time() + (10*60)
     while True:
         # search bugzilla for any relevant bugs
         bz_search_handler()
@@ -566,9 +566,10 @@ def main():
             handle_comments()
 
             # loop while we've got incoming messages
-            while MQ.get_message(config['mq_autoland_queue'],
-                    message_handler, routing_key='db'):
+            while mq.get_message(config['mq_autoland_queue'],
+                    message_handler):
                 continue
+            time.sleep(5)
 
 if __name__ == '__main__':
     main()
