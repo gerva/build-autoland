@@ -197,12 +197,13 @@ def bz_search_handler():
             if b == None:
                 branches.remove(branch)
                 log.info('Branch %s does not exist.' % (branch))
+                continue
             b = b[0]
             if b.status != 'enabled':
                 branches.remove(branch)
                 log.info('Branch %s is not enabled.' % (branch))
         if not branches:
-            log.info('Bug %d had no correct branches flagged' % (bug_id))
+            log.info('Bug %s had no correct branches flagged' % (bug_id))
             continue
 
         # patches are taken from the 'attachments' element of bug
@@ -236,7 +237,7 @@ def bz_search_handler():
         log.info('Inserting job: %s' % (patch_set))
         patchset_id = DB.PatchSetInsert(patch_set)
 
-        for patch in patch_set.patches:
+        for patch in patch_set.patchList():
             BZ.autoland_update_attachment({'status':'running',
                                                'attach_id':patch})
 
@@ -442,6 +443,7 @@ def handle_patchset(patchset):
     # since the job was put on the queue.
     patches = get_patchset(patchset.bug_id, patchset.try_run,
                            user_patches=patchset.patchList())
+    patches = patchset.patchList()
     # get branch information so that message can contain branch_url
     branch = DB.BranchQuery(Branch(name=patchset.branch))
     if not branch:
@@ -566,8 +568,7 @@ def main():
             handle_comments()
 
             # loop while we've got incoming messages
-            while mq.get_message(config['mq_autoland_queue'],
-                    message_handler):
+            while MQ.get_message(config['mq_autoland_queue'], message_handler):
                 continue
             time.sleep(5)
 

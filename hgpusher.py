@@ -168,7 +168,7 @@ class Patchset(object):
     def process(self):
         """
         Process this patchset, doing the following:
-            1. Check permissions on each patch
+            1. Check permissions on patchset
             2. Clone the repository
             3. Apply patches, with 3 attempts
         """
