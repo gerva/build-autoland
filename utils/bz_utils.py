@@ -9,7 +9,7 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-class bz_util():
+class bz_util(object):
     def __init__(self, api_url, attachment_url=None,
             username=None, password=None,
             jsonrpc_url=None,   # Not all tools use this
@@ -49,7 +49,7 @@ class bz_util():
             result = urllib2.urlopen(req)
             data = result.read()
             return json.loads(data)
-        except HTTP_EXCEPTIONS, err:
+        except (json.JSONDecodeError,) + HTTP_EXCEPTIONS, err:
             log.error('REQUEST ERROR: %s: %s' % (err, url))
             raise
 
@@ -116,95 +116,6 @@ class bz_util():
         info['name'] = re.split('\s*\[', data['real_name'], 1)[0]
         info['email'] = data.get('email', email)
         return info
-
-    def remove_whiteboard_tag(self, regex, bugid, retries=5, interval=10):
-        """
-        Remove the first whiteboard tag matching regex from the specified bug.
-        By default retries 5 times at a 30s interval.
-        Returns True if the regex was there to replace, and returns False if
-        there were no matches.
-        """
-        # have to compile the re in order to allow case-insensitivity in 2.6
-        reg = re.compile(regex, flags=re.I)
-        # get the current whiteboard tag
-        bug = self.request(path='bug/%s?include_fields='
-                'whiteboard,last_change_time,update_token' % (bugid))
-        if not 'update_token' in bug or not 'whiteboard' in bug:
-            return False
-        whiteboard = reg.sub('', bug['whiteboard'], count=1)
-
-        if whiteboard == bug['whiteboard']:
-            return False
-
-        data = {'token':bug['update_token'], 'whiteboard':whiteboard,
-                'last_change_time' : bug['last_change_time']}
-        try:
-            self.put_request(path='bug/%s' % (bugid),
-                    data=data, retries=retries, interval=interval)
-            return True
-        except ((Exception,) + HTTP_EXCEPTIONS), err:
-            log.error('Did not remove whiteboard tag from bug %s : %s'
-                    % (bugid, err))
-            return False
-
-    def add_whiteboard_tag(self, tag, bugid, retries=5, interval=10):
-        """
-        Add tag to the specified bug.
-        By default retries 5 times at a 30s interval.
-        """
-        bug = self.request(path='bug/%s?include_fields='
-                'whiteboard,last_change_time,update_token' % (bugid))
-        if not 'update_token' in bug:
-            log.debug('Not an editable bugid')
-            return False
-        if not 'whiteboard' in bug:
-            bug['whiteboard'] = tag
-        else:
-            bug['whiteboard'] += tag
-
-        data = {'token':bug['update_token'], 'whiteboard':bug['whiteboard'],
-                'last_change_time' : bug['last_change_time']}
-        try:
-            self.put_request(path='bug/%s' % (bugid),
-                    data=data, retries=retries, interval=interval)
-            return True
-        except ((Exception,) + HTTP_EXCEPTIONS), err:
-            log.debug('Did not add whiteboard tag to bug %s : %s'
-                    % (bugid, err))
-            return False
-
-    def replace_whiteboard_tag(self, regex, replacement, bugid,
-                               retries=5, interval=10):
-        """
-        Replace the specified regex with replacement. Returns True if the
-        replacement was completed successfully.
-        """
-        # have to compile the re in order to allow case-insensitivity in 2.6
-        reg = re.compile(regex, flags=re.I)
-        # get the current whiteboard tag
-        bug = self.request(path='bug/%s?include_fields='
-                'whiteboard,last_change_time,update_token' % (bugid))
-        if not 'update_token' in bug:
-            return False
-        if not 'whiteboard' in bug:
-            # In case regex is '^$' or similar, we still want to add it.
-            bug['whiteboard'] = ''
-
-        whiteboard = reg.sub(replacement, bug['whiteboard'], count=1)
-
-        if whiteboard == bug['whiteboard']:
-            return False
-
-        data = {'token':bug['update_token'], 'whiteboard':whiteboard,
-                'last_change_time' : bug['last_change_time']}
-        try:
-            self.put_request(path='bug/%s' % (bugid),
-                    data=data, retries=retries, interval=interval)
-            return True
-        except ((Exception,) + HTTP_EXCEPTIONS), err:
-            log.debug('Did not replace whiteboard tag to bug %s : %s'
-                    % (bugid, err))
-            return False
 
     def bugs_from_comments(self, comments):
         """
