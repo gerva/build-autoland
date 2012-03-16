@@ -241,7 +241,7 @@ def bz_search_handler():
             BZ.autoland_update_attachment({'status':'running',
                                                'attach_id':patch})
 
-@MQ.generate_callback
+@mq_utils.generate_callback
 def message_handler(message):
     """
     Handles json messages received. Expected structures are as follows:
