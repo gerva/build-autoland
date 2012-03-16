@@ -1,7 +1,9 @@
 try:
-    import json
-except ImportError:
     import simplejson as json
+except ImportError:
+    import json
+import datetime
+import re
 from sqlalchemy import MetaData, create_engine, func
 from sqlalchemy import outerjoin, or_, select, not_, and_, asc
 from db_utils import PENDING, RUNNING, COMPLETE, CANCELLED, \
@@ -153,13 +155,13 @@ class DBHandler(object):
         r = self.scheduler_db_meta.tables['branches']
         q = r.select()
         if not isinstance(branch.id,bool): q = q.where(r.c.id.like(branch.id))
-        if branch.name != False:
+        if branch.name:
             q = q.where(r.c.name.like(branch.name))
-        if branch.repo_url != False:
+        if branch.repo_url:
             q = q.where(r.c.repo_url.like(branch.repo_url))
         if not isinstance(branch.threshold,bool):
             q = q.where(r.c.threshold.like(branch.threshold))
-        if branch.status != False:
+        if branch.status:
             q = q.where(r.c.status.like(branch.status))
 
         connection = self.engine.connect()
@@ -278,12 +280,10 @@ class DBHandler(object):
         Update by PatchSet.id passed in patch_set.
         """
         r = self.scheduler_db_meta.tables['patch_sets']
-        if not patch_set.id:
-            return False
+        assert patch_set.id
         q = r.update(r.c.id == patch_set.id, patch_set)
         connection = self.engine.connect()
         connection.execute(q)
-        return True
 
     def PatchSetDelete(self, patch_set):
         """
@@ -302,7 +302,7 @@ class DBHandler(object):
         r = self.scheduler_db_meta.tables['patch_sets']
         enabled = self.BranchQuery(Branch(status='enabled'))
         if branch != '%' and branch not in map(lambda x: x.name, enabled):
-            return None
+            raise Exception("Bad Patchset Query")
         next_q = \
             '''
             SELECT DISTINCT patch_sets.id,bug_id,patches,author,
@@ -331,8 +331,6 @@ class DBHandler(object):
                 AND patch_sets.completion_time IS NULL
                 AND patch_sets.push_time IS NULL
             ''' # This gets extended below
-        # XXX: Took out the try branch is 'mozilla-central' in db so we can
-        #      move a patch set into the db for each subsequent branch
 
         b = self.BranchQuery(Branch(name='try'))
         if b == None:
@@ -341,7 +339,7 @@ class DBHandler(object):
             b = b[0]
         connection = self.engine.connect()
         # Checking to see how many try pushes are currently running
-        try_count = connection.execute('''SELECT count(*) as count
+        try_count = connection.execute('''SELECT count(id) as count
                               FROM patch_sets
                               WHERE try_run=1
                               AND NOT push_time IS NULL
@@ -388,8 +386,7 @@ class DBHandler(object):
         Update by Comment.id passed in cmnt.
         """
         r = self.scheduler_db_meta.tables['comments']
-        if not cmnt.id:
-            return False
+        assert cmnt.id
         q = r.update(r.c.id == cmnt.id, cmnt)
         connection = self.engine.connect()
         connection.execute(q)
@@ -421,9 +418,9 @@ class DBHandler(object):
 
 
 class Branch(object):
-    def __init__(self, id=False, name=False, repo_url=False,
+    def __init__(self, branch_id=False, name=False, repo_url=False,
             threshold=False, status=False):
-        self.id = id
+        self.id = branch_id
         self.name = str(name) if name else name
         self.repo_url = str(repo_url) if repo_url else repo_url
         self.threshold = threshold
@@ -436,36 +433,35 @@ class Branch(object):
         return self.status == 'enabled'
 
     def iteritems(self):
-        return self.toDict().items()
+        return self.toDict().iteritems()
 
     def toDict(self):
         d = {}
-        if self.id != False:
+        if self.id:
             d['id'] = self.id
-        if self.name != False:
+        if self.name:
             d['name'] = self.name
-        if self.repo_url != False:
+        if self.repo_url:
             d['repo_url'] = self.repo_url
         if not isinstance(self.threshold, bool):
             d['threshold'] = self.threshold
-        if self.status != False:
+        if self.status:
             d['status'] = self.status
         return d
 
 class PatchSet(object):
-    def __init__(self, id=False, bug_id=False, patches=False,
+    def __init__(self, ps_id=False, bug_id=False, patches=False,
             revision=False, branch=False, try_run=False,
             try_syntax=None, creation_time=False, push_time=False,
             completion_time=False, author=False, retries=False):
-        import datetime, re
-        self.id = id
+        self.id = ps_id
         self.bug_id = bug_id
         # Patches needs to be a string so that sqlalchemy can insert it
         if patches:
             self.patches = re.sub('\[| |\]', '', str(patches))
         else:
-            self.patches = False
-        self.revision = str(revision) if revision != False else revision
+            self.patches = None
+        self.revision = revision
         self.branch = branch
         self.try_run = try_run
         self.try_syntax = try_syntax
@@ -479,40 +475,38 @@ class PatchSet(object):
         return str(self.toDict())
 
     def iteritems(self):
-        return self.toDict().items()
+        return self.toDict().iteritems()
 
     def patchList(self):
         import re
         if not self.patches:
-            return ''
-        if isinstance(self.patches, list):
+            return []
+        if isinstance(self.patches, (list, tuple)):
             return self.patches
-        if isinstance(self.patches, str):
-            return map(lambda x: int(x), re.split(',', self.patches))
+        if isinstance(self.patches, basestring):
+            return [int(x) for x in re.split(',', self.patches)]
 
     def toDict(self):
         import re
         d = {}
-        if not isinstance(self.id,bool): d['id'] = self.id
-        if self.bug_id != False: d['bug_id'] = self.bug_id
-        if self.patches != False: d['patches'] =\
-                re.sub('\[|\]', '', str(self.patches))
-        if self.revision != False: d['revision'] = self.revision
-        if self.branch != False: d['branch'] = self.branch
-        if self.try_run in (1,0): d['try_run'] = self.try_run
-        if self.try_syntax != False: d['try_syntax'] = self.try_syntax
-        if self.creation_time != False: d['creation_time'] = self.creation_time
-        if self.push_time != False: d['push_time'] = self.push_time
-        if self.completion_time != False: d['completion_time'] =\
-                self.completion_time
-        if self.retries != False: d['retries'] = self.retries
-        if self.author != False: d['author'] = self.author
+        d['id'] = self.id
+        d['bug_id'] = self.bug_id
+        d['patches'] = ','.join(self.patchList())
+        d['revision'] = self.revision
+        d['branch'] = self.branch
+        d['try_run'] = self.try_run
+        d['try_syntax'] = self.try_syntax
+        d['creation_time'] = self.creation_time
+        d['push_time'] = self.push_time
+        d['completion_time'] = self.completion_time
+        d['retries'] = self.retries
+        d['author'] = self.author
         return d
 
 class Comment(object):
-    def __init__(self, id=False, comment=False,
+    def __init__(self, comment_id=False, comment=False,
             bug=False, attempts=1, insertion_time=False):
-        self.id = id
+        self.id = comment_id
         self.comment = comment
         self.bug = bug
         self.attempts = attempts
@@ -522,7 +516,7 @@ class Comment(object):
         return str(self.toDict())
 
     def iteritems(self):
-        return self.toDict().items()
+        return self.toDict().iteritems()
 
     def toDict(self):
         d = {
@@ -550,6 +544,7 @@ class BuildRequest(object):
         self.changes_revision = get_revision(changes_revision)
 
         self.changeid = set([changeid])
+        # why [changeid] ?
         self.when_timestamp = when_timestamp
         self.complete_at = complete_at
         self.finish_time = finish_time
@@ -559,8 +554,8 @@ class BuildRequest(object):
         self.results = results if results != None else NO_RESULT
         self.reason = reason
 
-        self.authors = set([author])
-        self.comments = set([comments])
+        self.authors = set([author]) # XXX: why?
+        self.comments = set([comments]) # XXX: why?
         self.buildername = buildername
         self.buildsetid = buildsetid
 
