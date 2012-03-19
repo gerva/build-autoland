@@ -11,22 +11,15 @@ import datetime
 
 log = logging.getLogger(__name__)
 
-class mq_util():
-    def __init__(self, host=None, exchange=None):
-        self.connection = None
-        self.log = log
-        self.last_message = None
+class mq_util(object):
+    connection = None
+    channel = None
+
+    def __init__(self, host, exchange=None):
         self.host = host
         self.exchange = exchange
-        self.channel = None
 
-    def set_host(self, host):
-        self.host = host
-
-    def set_exchange(self, exchange):
-        self.exchange = exchange
-
-    def connect(self, block=True):
+    def connect(self):
         """
         Connect to the host.
         If block is True, block until connection can be established.
@@ -34,29 +27,17 @@ class mq_util():
             declaration and binding is taken care of on the consumer when
             listen() is called.
         """
-        # XXX TODO - I don't think we want to block indefinitely here
-        assert not self.host == None, 'Rabbit host not set'
-        while(1):
+        while True:
             try:
                 self.connection = pika.BlockingConnection(
                     pika.ConnectionParameters(self.host) )
                 break
             except (sockerr, pika.exceptions.AMQPConnectionError):
-                if block:
-                    print >> sys.stderr, '[RabbitMQ] Failed connection', \
-                            'to %s, retry in 30s' % (self.host)
-                    log.info('[RabbitMQ] Failed connection ' +
-                            'to %s, retry in 30s' % (self.host))
-                    time.sleep(30)
-                    continue
-                else:
-                    print >> sys.stderr, '[RabbitMQ] Failed connection', \
-                            'to %s' % (self.host)
-                    log.info('[RabbitMQ] Failed connection to %s' \
-                            % (self.host))
-                    return None
-        print >> sys.stderr, '[RabbitMQ] Established connection to %s.' \
-                % (self.host)
+                log.warn('[RabbitMQ] Failed connection'
+                         'to %s, retry in 30s' % (self.host))
+                time.sleep(30)
+                continue
+        log.info('[RabbitMQ] Established connection to %s.' % (self.host))
         self.channel = self.connection.channel()
         self.channel.exchange_declare(exchange=self.exchange,
                 type='direct', durable=True)
@@ -65,8 +46,8 @@ class mq_util():
         """
         Disconnect from the host and return and empty channel.
         """
-        assert not self.connection == None, 'Not connected to host'
-        self.connection.close()
+        if self.connection:
+            self.connection.close()
         return None
 
     def declare_and_bind(self, queue, routing_key, durable=True):
@@ -128,7 +109,7 @@ class mq_util():
             if not block:
                 return None
             self.connect()
-        print >>sys.stderr, "Sending message %s" % (full_message)
+        log.info("Sending message %s" % (full_message))
         self.channel.basic_publish(exchange=self.exchange,
                     routing_key=routing_key,
                     body=json.dumps(full_message),
@@ -137,7 +118,8 @@ class mq_util():
                         content_type='application/json',
                 ))
 
-    def generate_callback(self, callback):
+    @staticmethod
+    def generate_callback(callback):
         """
         Generates a function that wraps the passed callback function.
         Used as a decorator to make a function callback-able.
@@ -162,7 +144,7 @@ class mq_util():
             return True
         return wrapped_callback
 
-    def get_message(self, queue, callback, block=True):
+    def get_message(self, queue, callback):
         """
         Gets a single message from the specified queue.
         Passes received messages to function callback, taking one argument.
@@ -173,11 +155,9 @@ class mq_util():
         while True:
             try:
                 if not self.channel:
-                    print >> sys.stderr, 'Connection lost. Reconnecting to %s'\
-                            % (self.host)
+                    log.warn(sys.stderr, 'Connection lost. Reconnecting to %s'
+                            % (self.host))
                     self.connect(block=block)
-                    if not block:
-                        return None
                 self.channel.basic_qos(prefetch_count=1)
                 # getting errors with callback parameter to basic_get,
                 # manually call the callback
@@ -188,10 +168,10 @@ class mq_util():
                 return callback(self.channel, method, header, body)
             except sockerr:
                 self.channel = None
-                log.info('[RabbitMQ] Connection to %s lost. Reconnection...'
+                log.warn('[RabbitMQ] Connection to %s lost. Reconnection...'
                         % (self.host))
 
-    def listen(self, queue, callback, block=True):
+    def listen(self, queue, callback):
         """
         Passes received messages to function callback, taking one argument.
             - ['_meta'] contains data about the received message
@@ -202,16 +182,14 @@ class mq_util():
         while True:
             try:
                 if not self.channel:
-                    if not block:
-                        return None
-                    print >> sys.stderr, 'Connection lost. Reconnecting to %s'\
-                            % (self.host)
+                    log.warn('Connection lost. Reconnecting to %s'
+                            % (self.host))
                     self.connect()
                 self.channel.basic_qos(prefetch_count=1)
                 self.channel.basic_consume(callback, queue=queue, no_ack=False)
                 self.channel.start_consuming()
             except sockerr:
                 self.channel = None
-                log.info('[RabbitMQ] Connection to %s lost. Reconnecting...'
+                log.warn('[RabbitMQ] Connection to %s lost. Reconnecting...'
                         % (self.host))
 
