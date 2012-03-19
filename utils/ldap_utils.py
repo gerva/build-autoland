@@ -11,12 +11,13 @@ from util.retry import retriable
 log = logging.getLogger(__name__)
 
 class ldap_util():
-    def __init__(self, host, port, bind_dn='', password=''):
+    def __init__(self, host, port, branch_api, bind_dn='', password=''):
         self.host = host
         self.port = port
         self.bind_dn = bind_dn
         self.password = password
         self.connection = self._connect()
+        self.branch_api = branch_api
 
     def _connect(self):
         return ldap.initialize('ldap://%s:%s' % (self.host, self.port))
@@ -95,18 +96,17 @@ class ldap_util():
     @retriable()
     def get_branch_permissions(self, branch):
         """
-        Queries http://hg.mozilla.org/repo-group?repo=/releases/%branch%
-        for the permission level on that branch.
+        Queries the branch permissions api for the
+        permission level on that branch.
             eg. scm_level_3
         """
-        url = 'http://hg.mozilla.org/repo-group?repo=/%s' % (branch)
-        req = urllib2.Request(url)
+        req = urllib2.Request(self.branch_api+branch)
         result = urllib2.urlopen(req)
         perms = result.read()
         perms = perms.rstrip()
-        if data.find('is not an hg repository') > 0 or \
-                data.find('Need a repository') > 0 or \
-                data.find('A problem occurred') > 0:
+        if 'is not an hg repository' in perms or \
+                'Need a repository' in perms or \
+                'A problem occurred' in perms:
             log.error('An error has occurred with branch permissions api:\n'
                       '\turl: %s\n\tresponse: %s' % (url, perms))
             return None

@@ -31,6 +31,7 @@ BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
 LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
+        config['ldap_branch_api'],
         config['ldap_bind_dn'], config['ldap_password'])
 
 ##
