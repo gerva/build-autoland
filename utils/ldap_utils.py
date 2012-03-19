@@ -2,27 +2,32 @@ import ldap
 import urllib2
 import logging
 
+import common
+base_dir = common.get_base_dir(__file__)
+import site
+site.addsitedir('%s/../../lib/python' % (base_dir))
+from util.retry import retriable
+
 log = logging.getLogger(__name__)
 
 class ldap_util():
-    class SearchError(Exception):
-        pass
     def __init__(self, host, port, bind_dn='', password=''):
         self.host = host
         self.port = port
         self.bind_dn = bind_dn
         self.password = password
-        self.connection = self.__connect__()
+        self.connection = self._connect()
 
-    def __connect__(self):
+    def _connect(self):
         return ldap.initialize('ldap://%s:%s' % (self.host, self.port))
 
-    def __bind__(self):
+    def _bind(self):
         self.connection.simple_bind(self.bind_dn, self.password)
         self.connection.result(timeout=10) # get rid of bind result
 
+    @retriable(cleanup=self._connect)
     def search(self, bind, filterstr, attrlist=None,
-            scope=ldap.SCOPE_SUBTREE, retries=5):
+            scope=ldap.SCOPE_SUBTREE):
         """
         A wrapper for ldap.search() to allow for retry on lost connection.
         Handles all connecting and binding prior to search and retries.
@@ -32,20 +37,12 @@ class ldap_util():
         Note that failures will be common, since connection closes at a certain
         point of inactivity, and needs to be re-established. Expect 2 attempts.
         """
-        for i in range(retries):
-            try:
-                self.__bind__()
-                self.connection.search(bind, scope,
-                        filterstr=filterstr, attrlist=attrlist)
-                result = self.connection.result(timeout=10)
-                log.info('Success')
-                return result
-            except ldap.SERVER_DOWN, err:
-                self.connection = self.__connect__()
-                log.error('Error: %s' % (err))
-                if i != retries:
-                    log.info('Retrying LDAP search')
-        return False
+        self._bind()
+        self.connection.search(bind, scope,
+                filterstr=filterstr, attrlist=attrlist)
+        result = self.connection.result(timeout=10)
+        log.info('Success')
+        return result
 
     def get_group_members(self, group):
         """
@@ -54,11 +51,10 @@ class ldap_util():
         members = []
         result = self.search('ou=groups,dc=mozilla',
                 filterstr='cn=%s' % (group))
-        if result == False:
-            raise self.SearchError
-        elif result == []:
+        if not result:
             return []
         for group in result[1]:
+            # get the union of all members in the searched groups
             members = list(set(members) | set(group[1]['memberUid']))
         return members
 
@@ -69,10 +65,7 @@ class ldap_util():
         'scm_level_2', and 'scm_level_3'.
         """
         members = self.get_group_members(group)
-
-        if mail in members:
-            return True
-        return False
+        return mail in members
 
     def get_member(self, filter_, attrlist=None):
         """
@@ -95,12 +88,11 @@ class ldap_util():
             sshPublicKey
         """
         result = self.search('o=com,dc=mozilla', filter_, attrlist)
-        if result == False:
-            raise self.SearchError
-        elif result == []:
+        if not result:
             return []
         return result[1]
 
+    @retriable()
     def get_branch_permissions(self, branch):
         """
         Queries http://hg.mozilla.org/repo-group?repo=/releases/%branch%
@@ -110,23 +102,22 @@ class ldap_util():
         url = 'http://hg.mozilla.org/repo-group?repo=/%s' % (branch)
         req = urllib2.Request(url)
         result = urllib2.urlopen(req)
-        data = result.read()
-        data = data[:-1]
+        perms = result.read()
+        perms = perms.rstrip()
         if data.find('is not an hg repository') > 0 or \
                 data.find('Need a repository') > 0 or \
                 data.find('A problem occurred') > 0:
             log.error('An error has occurred with branch permissions api:\n'
-                      '\turl: %s\n\tresponse: %s' % (url, data))
+                      '\turl: %s\n\tresponse: %s' % (url, perms))
             return None
-        log.info('Required permissions for %s: %s' % (branch, data))
-        return data
+        log.info('Required permissions for %s: %s' % (branch, perms))
+        return perms
 
     def get_bz_email(self, email):
-        email = self.get_member('bugzillaEmail=%s'
-                % (email), ['mail'])
+        member = self.get_member('bugzillaEmail=%s' % (email), ['mail'])
         try:
-            email = email[0][1]['mail'][0]
+            bz_email = member[0][1]['mail'][0]
         except (IndexError, KeyError):
-            email = None
-        return email
+            bz_email = None
+        return bz_email
 
