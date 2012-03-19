@@ -131,20 +131,25 @@ class SchedulerDBPoller():
                 final_status = "FAILURE"
                 if self.verbose:
                     log.debug("Complete and a failure")
-        elif results['total_builds'] - results['warnings'] == results['success'] and results['warnings'] <= (MAX_ORANGE * 2):
+        elif (results['total_builds'] - results['warnings']) \
+                == results['success'] \
+                and results['warnings'] <= (MAX_ORANGE * 2):
             # Get buildernames where result was warnings
             buildernames = {}
             for value in buildrequests.values():
                 br = value.to_dict()
                 # Collect duplicate buildernames
                 if not buildernames.has_key(br['buildername']):
-                    buildernames[br['buildername']] = [(br['results_str'], br['branch'], br['bid'])]
+                    buildernames[br['buildername']] = \
+                            [(br['results_str'], br['branch'], br['bid'])]
                 else:
-                    buildernames[br['buildername']].append((br['results_str'], br['branch'], br['bid']))
+                    buildernames[br['buildername']].append(
+                            (br['results_str'], br['branch'], br['bid']))
             retry_count = 0
             retry_pass = 0
             for name, info in buildernames.items():
-                # If we have more than one result for a builder name, compare the results
+                # If we have more than one result for a builder name,
+                # compare the results
                 if len(info) == 2:
                     if self.verbose:
                         log.debug("WE HAVE A DUPE: %s" % name)
@@ -156,14 +161,16 @@ class SchedulerDBPoller():
                         # We have a mismatch of results - is one a success?
                         if 'success' in c[0]:
                             if self.verbose:
-                                log.debug("There's a success, incrementing retry_pass")
+                                log.debug("There's a success, "
+                                          "incrementing retry_pass")
                             retry_pass += 1
                 # Unique buildername with warnings, attempt a rebuild
                 else:
                     for result, branch, bid in info:
                         if result == 'warnings':
                             if self.verbose:
-                                log.debug("Attempting to retry branch: %s bid: %s" % (branch, bid))
+                                log.debug("Attempting to retry branch: "
+                                          "%s bid: %s" % (branch, bid))
                             try:
                                 post = self.SelfServeRebuild(bid)
                                 is_complete = False
@@ -454,7 +461,8 @@ class SchedulerDBPoller():
                         is_complete = False
                         break
             if is_complete:
-                # one more check before it's _really complete_ - any oranges to retry?
+                # one more check before it's _really complete_
+                # -- any oranges to retry?
                 if self.verbose:
                     log.debug("Check Orange Factor for rev: %s" % revision)
                 is_complete, status['status_string'] = \
@@ -494,7 +502,8 @@ class SchedulerDBPoller():
         action = run_type + '.RUN'
 
         if status_str == 'TIMED_OUT':
-            message += "\n Timed out after %s hours without completing." % strftime('%I', gmtime(TIMEOUT))
+            message += "\n Timed out after %s hours without completing." \
+                    % strftime('%I', gmtime(TIMEOUT))
 
         posted = self.bz.has_comment(message, bug)
 
@@ -549,25 +558,29 @@ class SchedulerDBPoller():
             'discard': False,
         }
         buildrequests = self.scheduler_db.GetBuildRequests(revision, self.branch)
-        build_type = self.ProcessPushType(revision, buildrequests, flag_check)
+        run_type = self.ProcessPushType(revision, buildrequests, flag_check)
         bugs = self.GetBugNumbers(buildrequests)
-        info['status'], info['is_complete'] = self.CalculateBuildRequestStatus(buildrequests, revision)
+        info['status'], info['is_complete'] = \
+                self.CalculateBuildRequestStatus(buildrequests, revision)
         if self.verbose:
-            log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s TYPE: %s IS_COMPLETE: %s" % (info['status'], bugs, type, info['is_complete']))
+            log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s TYPE: "
+                      "%s IS_COMPLETE: %s"
+                      % (info['status'], bugs, type, info['is_complete']))
         log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s "
                 "TYPE: %s IS_COMPLETE: %s"
                 % (info['status'], bugs, push_type, info['is_complete']))
         if info['is_complete'] and len(bugs) > 0:
             results = self.CalculateResults(buildrequests)
-            info['message'] = self.GenerateResultReportMessage(revision, results, self.GetSingleAuthor(buildrequests))
+            info['message'] = self.GenerateResultReportMessage(
+                    revision, results, self.GetSingleAuthor(buildrequests))
             if self.verbose:
                 log.debug("POLL_BY_REVISION: MESSAGE: %s" % info['message'])
             for bug in bugs:
                 if info['message'] != None and self.dry_run == False:
-                    info['posted_to_bug'] = self.ProcessCompletedRevision(revision=revision, 
-                                                    message=info['message'], bug=bug, 
-                                                    status_str=info['status']['status_string'], 
-                                                    type=type)
+                    info['posted_to_bug'] = self.ProcessCompletedRevision(
+                            revision=revision, message=info['message'],
+                            bug=bug, run_type=run_type,
+                            status_str=info['status']['status_string'])
                 elif self.dry_run:
                     log.debug("DRY RUN: Would have posted %s to %s"
                             % (info['message'], bug))
@@ -630,7 +643,8 @@ class SchedulerDBPoller():
         # gather incomplete revisions and writing to cache
         incomplete = {}
         for revision,info in rev_report.items():
-            # Incomplete builds that have bugs get added to dict for re-checking later
+            # Incomplete builds that have bugs
+            # get added to dict for re-checking later
             if not info['is_complete']:
                 if len(info['bugs']) == 1:
                     incomplete[revision] = {'status': info['status'],
@@ -642,16 +656,15 @@ class SchedulerDBPoller():
                     info['push_type'] != None and len(info['bugs']) == 1:
                 bug = info['bugs'][0]
                 if not self.ProcessCompletedRevision(revision,
-                                      rev_report[revision]['message'],
-                                      bug,
-                                      rev_report[revision]['status']['status_string'], 
-                                      info['push_type']):
+                          rev_report[revision]['message'],
+                          bug,
+                          rev_report[revision]['status']['status_string'],
+                          info['push_type']):
                     # If bug post didn't happen put it back
                     # (once per revision) into cache to try again later
                     if not incomplete.has_key(revision):
                         incomplete[revision] = {'status': info['status'],
-                                                'bugs': info['bugs'],
-                                                }
+                                                'bugs': info['bugs']}
             # Complete but to be discarded
             elif info['is_complete']:
                 if self.verbose:
@@ -749,12 +762,14 @@ if __name__ == '__main__':
 
     lock_file = None
     try:
-        lock_file = lock.lock(os.path.join(os.getcwd(), '.schedulerDbPoller.lock'), timeout=1)
+        lock_file = lock.lock(os.path.join(
+            os.getcwd(), '.schedulerDbPoller.lock'), timeout=1)
 
         if options.revision:
-            poller = SchedulerDBPoller(branch=options.branch, cache_dir=options.cache_dir, config=options.config, 
-                                        user=options.user, password=options.password, dry_run=options.dry_run, 
-                                        verbose=options.verbose)
+            poller = SchedulerDBPoller(branch=options.branch,
+                    cache_dir=options.cache_dir, config=options.config,
+                    user=options.user, password=options.password,
+                    dry_run=options.dry_run, verbose=options.verbose)
             result = poller.PollByRevision(options.revision, options.flag_check)
             if options.verbose:
                 log.setLevel(logging.DEBUG)
