@@ -12,27 +12,6 @@ IDLE = 0
 BUSY = 1
 UNKNOWN = 2
 
-BUILDPOOL_MASTERS = {
-    'buildpool': [
-        'production-master01.build.mozilla.org',
-        'production-master03.build.mozilla.org',
-        'buildbot-master1.build.scl1.mozilla.com:/builds/buildbot/build_master3',
-        'buildbot-master2.build.scl1.mozilla.com:/builds/buildbot/build_master4',
-    ],
-    'trybuildpool': [
-        'production-master02.build.mozilla.org',
-    ],
-    'testpool': [
-        'test-master01',
-        'test-master02',
-        'talos-master02',
-        'buildbot-master1.build.scl1.mozilla.com:/builds/buildbot/tests_master3',
-        'buildbot-master1.build.scl1.mozilla.com:/builds/buildbot/tests_master4',
-        'buildbot-master2.build.scl1.mozilla.com:/builds/buildbot/tests_master5',
-        'buildbot-master2.build.scl1.mozilla.com:/builds/buildbot/tests_master6',
-    ],
-}
-
 PLATFORMS_BUILDERNAME = {
     'linux': [
         re.compile('^Linux (?!x86-64).+'),
@@ -151,46 +130,6 @@ SLAVE_SILOS = {
     'w32-ix': [re.compile('^w32-ix-slave.+')],
     'win32': [re.compile('^win32-slave.+')],
 }
-
-BUILDERS_DETAIL_LEVELS = ['branch', 'platform', 'build_type', 'job_type',
-    'builder']
-
-BUILDSET_REASON = {
-    'forcebuild':
-        re.compile("The web-page 'force build' button was pressed by .+"),
-    'rebuild':
-        re.compile("The web-page 'rebuild' button was pressed by .+"),
-}
-
-"""
-Pushes Report Configs
-"""
-PUSHES_SOURCESTAMPS_BRANCH_SQL_EXCLUDE = [
-    '%unittest',
-    '%talos',
-    'addontester%',
-    '%l10n%',
-]
-
-"""
-Wait Times Report Configs
-"""
-WAITTIMES_BUILDREQUESTS_BUILDERNAME_SQL_EXCLUDE = [
-    'fuzzer-%',
-    'Android Tegra 250 %',
-    'nanojit-%',
-    'release-%',
-    'valgrind%',
-]
-
-WAITTIMES_BUILDSET_REASON_SQL_EXCLUDE = [
-    "The web-page 'force build' button was pressed by %",
-    "The web-page 'rebuild' button was pressed by %",
-]
-
-WAITTIMES_BUILDREQUESTS_BUILDERNAME_EXCLUDE = [
-    re.compile('.+ l10n .+'),
-]
 
 _STATUS_TO_STR = {
     PENDING: 'PENDING',
