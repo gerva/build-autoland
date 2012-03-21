@@ -205,7 +205,7 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
 
     if user_patches:
         # user-specified patches, need to pull them in that set order
-        user_patches = tuple(user_patches)    # take a local copy, passed by ref
+        user_patches = list(user_patches)    # take a local copy, passed by ref
         for user_patch in tuple(user_patches):
             for attachment in bug_data['attachments']:
                 if attachment['id'] != user_patch \
