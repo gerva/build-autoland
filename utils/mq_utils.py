@@ -69,7 +69,7 @@ class mq_util():
         self.connection.close()
         return None
 
-    def __declare_and_bind(self, queue, routing_key, durable=True):
+    def declare_and_bind(self, queue, routing_key, durable=True):
         """
         Declare the specified cue on the bound exchange, and bind it to
         the specified routing key.
@@ -96,11 +96,13 @@ class mq_util():
             print "Could not purge queue %s, does not exist" % (queue)
             return
         if prompt:
-            print "Warning: Queue %s contains %s messages, and there may be unacknowledged messages."\
+            print "Warning: Queue %s contains %s messages, "\
+                  "and there may be unacknowledged messages."\
                     % (queue, status.method.message_count)
             ans = None
             while ans != 'y' and ans != 'n':
-                ans = raw_input("Are you sure you'd like to purge the queue?[y/n] ")
+                ans = raw_input("Are you sure you'd like "
+                                "to purge the queue?[y/n] ")
                 ans = ans.lower()
             if ans.lower() == 'n':
                 return
@@ -127,21 +129,24 @@ class mq_util():
                 return None
             self.connect()
         print >>sys.stderr, "Sending message %s" % (full_message)
-        self.channel.basic_publish(exchange=self.exchange, routing_key=routing_key,
-                    body=json.dumps(full_message), properties=pika.BasicProperties(
+        self.channel.basic_publish(exchange=self.exchange,
+                    routing_key=routing_key,
+                    body=json.dumps(full_message),
+                    properties=pika.BasicProperties(
                         delivery_mode=2,
                         content_type='application/json',
                 ))
 
-    def __callback_gen(self, callback):
+    def generate_callback(self, callback):
         """
         Generates a function that wraps the passed callback function.
+        Used as a decorator to make a function callback-able.
         """
-        def callback_wrapper(ch, method, properties, body):
+        def wrapped_callback(chan, method, properties, body):
             try:
                 message = json.loads(body)
             except ValueError:
-                ch.basic_ack(delivery_tag = method.delivery_tag)
+                chan.basic_ack(delivery_tag = method.delivery_tag)
                 return False
             except TypeError:
                 # No string received, this is caused in get_message
@@ -153,12 +158,11 @@ class mq_util():
                 message['_meta'] = {}
             message['_meta']['received_time'] = str(datetime.datetime.utcnow())
             callback(message)
-            ch.basic_ack(delivery_tag = method.delivery_tag)
+            chan.basic_ack(delivery_tag = method.delivery_tag)
             return True
-        callback_wrapper.callback = callback
-        return callback_wrapper
+        return wrapped_callback
 
-    def get_message(self, queue, callback, routing_key, durable=True, block=True):
+    def get_message(self, queue, callback, block=True):
         """
         Gets a single message from the specified queue.
         Passes received messages to function callback, taking one argument.
@@ -166,7 +170,6 @@ class mq_util():
             - ['payload'] contains the message payload
         """
         assert callable(callback), 'callback must be a function'
-        self.__declare_and_bind(queue, routing_key, durable)
         while True:
             try:
                 if not self.channel:
@@ -178,14 +181,17 @@ class mq_util():
                 self.channel.basic_qos(prefetch_count=1)
                 # getting errors with callback parameter to basic_get,
                 # manually call the callback
-                callback_wrapper = self.__callback_gen(callback)
-                return callback_wrapper(self.channel, *self.channel.basic_get(queue=queue, no_ack=False))
+                method, header, body = self.channel.basic_get(
+                        queue=queue, no_ack=False)
+                if method.NAME == 'Basic.GetEmpty':
+                    return
+                return callback(self.channel, method, header, body)
             except sockerr:
                 self.channel = None
                 log.info('[RabbitMQ] Connection to %s lost. Reconnection...'
                         % (self.host))
 
-    def listen(self, queue, callback, routing_key, durable=True, block=True):
+    def listen(self, queue, callback, block=True):
         """
         Passes received messages to function callback, taking one argument.
             - ['_meta'] contains data about the received message
@@ -193,7 +199,6 @@ class mq_util():
         Specify block if it should block until a connection can be made.
         """
         assert callable(callback), 'callback must be a function'
-        self.__declare_and_bind(queue, routing_key, durable)
         while True:
             try:
                 if not self.channel:
@@ -202,9 +207,8 @@ class mq_util():
                     print >>sys.stderr, 'Connection lost. Reconnecting to %s'\
                             % (self.host)
                     self.connect()
-                log.info('[RabbitMQ] Listening on %s.' % (routing_key))
                 self.channel.basic_qos(prefetch_count=1)
-                self.channel.basic_consume(self.__callback_gen(callback), queue=queue, no_ack=False)
+                self.channel.basic_consume(callback, queue=queue, no_ack=False)
                 self.channel.start_consuming()
             except sockerr:
                 self.channel = None

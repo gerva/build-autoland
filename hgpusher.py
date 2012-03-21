@@ -6,15 +6,15 @@ import logging.handlers
 import shutil
 from mercurial import error, lock   # For lockfile on working dirs
 
-base_dir = common.get_base_dir(__file__)
-import site
-site.addsitedir('%s/../../lib/python' % (base_dir))
-
-from util.hg import mercurial, apply_and_push, cleanOutgoingRevs, out, \
-                    remove_path, HgUtilError, update, get_revision
-from util.retry import retry
 from utils import bz_utils, mq_utils, common, ldap_utils
+BASE_DIR = common.get_base_dir(__file__)
+import site
+site.addsitedir('%s/../../lib/python' % (BASE_DIR))
 
+from util.hg import mercurial, apply_and_push, HgUtilError, \
+                    update, get_revision
+from util.retry import retry, retriable
+from util.commands import run_cmd
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(
@@ -24,12 +24,299 @@ LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 mq = mq_utils.mq_util()
 
-config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
+config = common.get_configuration(os.path.join(BASE_DIR, 'config.ini'))
 bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
 ldap = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
         config['ldap_bind_dn'], config['ldap_password'])
+
+class RetryException(Exception):
+    """
+    Used to trigger a retry when using retriable functions.
+    """
+    pass
+class FailException(Exception):
+    """
+    Used to fail immediately without retry when using retriable functions.
+    """
+    pass
+
+class RepoCleanup(object):
+    """
+    Used for cleaning up the active/clean repositories for
+    the specified branch.
+    """
+    def __init__(self, branch, url):
+        self.i = 0
+        self.branch = branch
+        self.url = url
+
+    def __call__(self):
+        self.i += 1
+        if self.i == 2:
+            self.hard_clean()
+        else:
+            self.soft_clean()
+
+    def soft_clean(self):
+        """
+        Only does an update -C on the active repository
+        to get rid of any applied, not committed patches.
+        """
+        active_repo = os.path.join('active', self.branch)
+
+        # get rid of any imported and qpush-ed patches
+        log.debug('qpop -a and rm -rf .hg/patches')
+        (success, err, ret) = run_hg(['qpop', '-a'])
+        run_cmd(['rm', '-rf', os.path.join(active_repo, '.hg/patches')])
+
+        log.debug('Update -C on active repo for: %s' % (self.branch))
+        update(active_repo)
+
+    def hard_clean(self):
+        """
+        Deletes the clean and active repositories & re-clones.
+        """
+        clear_branch(self.branch)
+        log.debug('Wiped repositories for: %s' % (self.branch))
+        try:
+            cloned_revision = clone_branch(self.branch, self.url)
+        except RetryException:
+            log.error('[HgPusher] Clone error while cleaning')
+            # XXX: do something....
+
+
+class Patch(object):
+    def __init__(self, patch):
+        self.num = patch['id']
+        self.author_name = patch['author']['name']
+        self.author_email = patch['author']['email']
+        self.reviews = patch.get('reviews', None)
+        self.file = None
+        self.user = None
+
+    def get_file(self):
+        """
+        Download patch file to the 'patches' dir. Return the file name,
+        or None on failure.
+        """
+        log.debug("Getting patch %s" % (self.num))
+        self.file = bz.get_patch(self.num, 'patches', create_path=True)
+        return self.file
+
+    def fill_user(self):
+        """
+        Fill the user string from author info.
+        """
+        self.user = '%s <%s>' % (self.author_name, self.author_email)
+
+    def delete(self):
+        """
+        Delete the file from the filesystem.
+        """
+        try:
+            if self.file:
+                os.remove(self.file)
+        except OSError, err:
+            log.error('File %s could not be deleted.' % (self.file))
+        self.file = None
+
+
+class Patchset(object):
+    def __init__(self, ps_id, bug_id, patches, try_run, push_url,
+            branch, branch_url, try_syntax=None):
+        """
+        Creates a Patchset object.
+        Fills in an active_repo field to point to a directory for
+            the specified branch.
+        If try_syntax not specified, uses the default.
+        """
+        self.num = ps_id
+        self.bug_id = bug_id
+        self.patches = [Patch(patch) for patch in patches]
+        self.try_run = try_run
+        self.push_url = push_url
+        self.branch = branch
+        self.branch_url = branch_url
+        if try_syntax != None:
+            self.try_syntax = try_syntax
+        else:
+            self.try_syntax = config['hg_try_syntax']
+
+        self.active_repo = os.path.join('active/%s' % (branch))
+        self.comment = ''
+        self.setup_comment()
+
+    def setup_comment(self):
+        """
+        Set up the comment with the default comment header.
+        """
+        self.comment = ['Autoland Patchset:\n\tPatches: %s\n\tBranch: %s%s'
+                % (', '.join(str(x.num) for x in self.patches),
+                   self.branch, (' => try' if self.try_run else ''))]
+
+    def add_comment(self, msg):
+        """
+        Check if the comment already contains the given message. If not,
+        append it to the comment.
+        """
+        if not msg in self.comment:
+            self.comment.append(msg)
+
+    def process(self):
+        """
+        Process this patchset, doing the following:
+            1. Check permissions on each patch
+            2. Clone the repository
+            3. Apply patches, with 3 attempts
+        """
+        # 1. Check permissions on each patch
+        if not has_sufficient_permissions(self.patches,
+                self.branch if not self.try_run else 'try'):
+            log.error('Insufficient permissions to push to %s.'
+                    % (self.branch if not self.try_run else 'try'))
+            self.add_comment('Insufficient permissions to push to %s.'
+                    % (self.branch if not self.try_run else 'try'))
+            return (False, '\n'.join(self.comment))
+        # 2. Clone the repository
+        cloned_rev = None
+        try:
+            cloned_rev = clone_branch(self.branch, self.branch_url)
+        except RetryException:
+            log.error('[Branch %s] Could not clone from %s.'
+                    % (self.branch, self.branch_url))
+            self.add_comment('An error occurred while cloning %s.'
+                    % (self.branch_url))
+            return (False, '\n'.join(self.comment))
+        # 3. Apply patches, with 3 attempts
+        try:
+            # make 3 attempts so that
+            # 1st is on current clone,
+            # 2nd attempt is after an update -C,
+            # 3rd attempt is a fresh clone
+            retry(apply_and_push, attempts=3,
+                    retry_exceptions=(RetryException),
+                    cleanup=RepoCleanup(self.branch, self.branch_url),
+                    args=(self.active_repo, self.push_url,
+                          self.apply_patches, 1),
+                    kwargs=dict(ssh_username=config['hg_username'],
+                                ssh_key=config['hg_ssh_key'],
+                                force=self.try_run))    # force only on try
+            revision = get_revision(self.active_repo)
+            shutil.rmtree(self.active_repo)
+            for patch in self.patches:
+                patch.delete()
+        except (HgUtilError, RetryException, FailException), err:
+            # Failed
+            log.error('[PatchSet] Could not be applied and pushed.\n%s'
+                    % (err))
+            self.add_comment('Patchset could not be applied and pushed.'
+                             '\n%s' % (err))
+            return (False, '\n'.join(self.comment))
+        except (OSError), err:
+            # There was an error with the active_repo location
+            log.error('An error occurred: %s' % (err))
+            self.add_comment('Patchset could not be applied and pushed.'
+                             '\nAn unexpected error occurred')
+            return (False, '\n'.join(self.comment))
+        # Success
+        self.setup_comment() # Clear the comment
+        if self.try_run:
+            # comment to bug with link to the try run on tbpl and in hg
+            self.add_comment('\tDestination: '
+                    'http://hg.mozilla.org/try/pushloghtml?changeset=%s'
+                        % (revision))
+            self.add_comment('Try run started, revision %s.'
+                    ' To cancel or monitor the job, see: %s'
+                    % (revision, os.path.join(config['tbpl_url'],
+                                            '?tree=Try&rev=%s' % (revision))))
+        else:
+            # comment to bug with push information
+            self.add_comment('\tDestination: '
+                    'http://hg.mozilla.org/%s/pushloghtml?changeset=%s'
+                            % (self.branch, revision))
+            self.add_comment('Successfully applied and pushed patchset.\n'
+                    '\tRevision: %s' % (revision))
+            if self.branch == 'mozilla-central':
+                self.add_comment('To monitor the commit, see: %s'
+                        % (os.path.join(config['tbpl_url'],
+                           '?tree=Firefox&rev=%s' % (revision))))
+            elif self.branch == 'mozilla-inbound':
+                self.add_comment('To monitor the commit, see: %s'
+                        % (os.path.join(config['tbpl_url'],
+                           '?tree=Mozilla-Inbound&rev=%s' % (revision))))
+        return (revision, '\n'.join(self.comment))
+
+    def apply_patches(self, branch_dir, attempt):
+        """
+        apply_patches() is meant to be passed to apply_and_push.
+        First verify the patchset, and then import & commit each patch.
+        If anything fails, RetryException will be raised.
+        """
+        self.verify()
+        self.finish_import()
+
+    def verify(self):
+        """
+        Verify the following for each patch:
+            1. The patch exists and can be downloaded
+            2. has valid headers. If try run, put user data into patch.user
+            3. patch applies using 'import --no-commit -f'
+        """
+        log.debug('Verifying patchset')
+        if not self.patches:
+            raise RetryException
+        for patch in self.patches:
+            # 1. The patch exists and can be downloaded
+            if not patch.get_file():
+                log.error('[Patch %s] Couldn\'t be fetched.' % (patch.num))
+                self.add_comment('Patch %s couldn\'t be fetched.'
+                        % (patch.num))
+                raise RetryException
+
+            # 2. has valid headers. If try run, put user data into patch.user
+            valid_header = has_valid_header(patch.file)
+            if not valid_header:
+                # check branch name, since self.try_run is set to true even if
+                # it is a try run for a branch landing.
+                # On a branch landing, valid headers are required. This means
+                # that the job should fail on the try run.
+                if not self.branch.lower() == 'try':
+                    log.error('[Patch %s] Invalid header.' % (patch.num))
+                    self.add_comment('Patch %s doesn\'t have '
+                            'a properly formatted header. To land to branches,'
+                            ' patches must contain a header with a commit '
+                            'message and user field.'
+                            % (patch.num))
+                    raise FailException
+                # on a try run, fill in the user information
+                patch.fill_user()
+            # 3. patch applies using 'qimport; qpush'
+            (patch_success, err) = import_patch(self.active_repo,
+                    patch.file, self.try_run, user=patch.user,
+                    try_syntax=self.try_syntax, bug_id=self.bug_id)
+            if not patch_success:
+                log.error('[Patch %s] could not verify import:\n%s'
+                        % (patch.num, err))
+                self.add_comment('Patch %s could not be applied to %s.\n%s'
+                        % (patch.num, self.branch, err))
+                raise RetryException
+        log.debug('Patchset is valid')
+
+    def finish_import(self):
+        """
+        Perform an 'hg import' on each patch in the set.
+        If this is a try run, use the patch.user field to commit.
+        """
+        log.debug('QFinish-ing the import.')
+        cmd = ['qfinish', '-a', '-R', self.active_repo]
+        (output, err, ret) = run_hg(cmd)
+        if ret != 0:
+            log.error('Unable to qfinish the patch queue: %s\nRetrying.'
+                    % (err))
+            raise RetryException
+
 
 def run_hg(hg_args):
     """
@@ -38,11 +325,12 @@ def run_hg(hg_args):
     """
     cmd = ['hg']
     cmd.extend(hg_args)
+    log.info('Running cmd: %s' % (cmd))
     proc = subprocess.Popen(cmd,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    (out, err) = proc.communicate()
-    rc = proc.returncode
-    return (out, err, rc)
+    (output, err) = proc.communicate()
+    ret = proc.returncode
+    return (output, err, ret)
 
 def has_valid_header(filename):
     """
@@ -52,29 +340,33 @@ def has_valid_header(filename):
     Note: this forces developers to use 'hg export' rather than 'hg diff'
           if they want to be pushing to branch.
     """
-    f = open(filename, 'r')
-    puser = re.compile('# User ')
-    userline = re.compile('# User [\w\s]+ ' # Match the user line, starts with "User" and then a name
-            '<[\w\d._%+-]+@[\w\d.-]+\.\w{2,6}>$') # User line ends with an email in <>
+    with open(filename, 'r') as f_in:
+        puser = re.compile(r'# User ')
 
-    commentline = re.compile('^[^#$]+')     # Comment line is always first line
-                                            # not prefixed with #
-    has_userline = False
-    for line in f:
-        if puser.match(line):
-            has_userline = True
-            # User line must be of the form
-            # # User Name <name@email.com>
-            if not userline.match(line):
-                print 'Bad header.'
-                return False
-        elif commentline.match(line):
-            # userline always before commit message, so if we have it along
-            # with a commit message, return True, else False
-            return has_userline
-        elif re.match('^$', line):
-            # done with header since header ends with an empty line
-            break
+        # Match the user line, starts with "User" and then a name
+        # ends with an email address in <>
+        userline = re.compile(r'# User [\w\s]+ '
+                '<[\w\d._%+-]+@[\w\d.-]+\.\w{2,6}>$')
+
+        # Commit message is always fist line not prefixed with #
+        commitline = re.compile(r'^[^#$]+')
+
+        has_userline = False
+        for line in f_in:
+            if puser.match(line):
+                has_userline = True
+                # User line must be of the form
+                # # User Name <name@email.com>
+                if not userline.match(line):
+                    log.info('Bad header.')
+                    return False
+            elif commitline.match(line):
+                # userline always before commit message, so if we have it along
+                # with a commit message, return True, else False
+                return has_userline
+            elif line == '':
+                # done with header since header ends with an empty line
+                break
     return False
 
 def in_ldap_group(email, group):
@@ -99,9 +391,9 @@ def has_sufficient_permissions(patches, branch):
 
     for patch in patches:
         found = False
-        if in_ldap_group(patch['author']['email'], group):
+        if in_ldap_group(patch.author_email, group):
             continue    # next patch
-        for review in patch.get('reviews'):
+        for review in patch.reviews:
             if not review.get('reviewer'):
                 continue
             if in_ldap_group(review['reviewer'], group):
@@ -112,185 +404,42 @@ def has_sufficient_permissions(patches, branch):
 
     return True
 
-def import_patch(repo, patch, try_run, bug_id=None, user=None,
-        try_syntax="-p win32 -b o -u none"):
+def import_patch(repo, patch, try_run, bug_id, user=None,
+        try_syntax=config['hg_try_syntax']):
     """
-    Import patch file patch into repo.
-    If it is a try run, replace commit message with "try:"
+    Import patch file patch into a mercurial queue.
 
     Import is used to pull required header information, and to
     automatically perform a commit for each patch
     """
-    cmd = ['import', '-R']
-    cmd.append(repo)
+    cmd = ['qimport', '-R', repo, patch]
+    (output, err, ret) = run_hg(cmd)
+    if ret != 0:
+        return (ret == 0, err)
+    cmd = ['qpush', '-R', repo]
+    (output, err, ret) = run_hg(cmd)
+    if ret != 0:
+        return (ret == 0, err)
+
+    cmd = ['qrefresh', '-R', repo]
+    # if a user field specified, qrefesh that name in there
     if user:
-        cmd.append('-u %s' % (user))
+        cmd.extend(['-u', user])
+
     if try_syntax == None:
         try_syntax = ''
     if try_run:
-        # if there is no try_syntax, try defaults will get triggered by the 'try: ' alone
+        # if there is no try_syntax,
+        # try defaults will be triggered by 'try:'
         if config.get('staging', False):
-            cmd.extend(['-m "try: %s -n bug %s"' % (try_syntax, bug_id)])
+            cmd.extend(['-m', 'try: %s -n bug %s' % (try_syntax, bug_id)])
         else:
-            cmd.extend(['-m "try: %s -n --post-to-bugzilla bug %s"' % (try_syntax, bug_id)])
-    cmd.append(patch)
-    print cmd
-    (out, err, rc) = run_hg(cmd)
-    return (rc, err)
+            cmd.extend(['-m', 'try: %s -n --post-to-bugzilla bug %s' \
+                    % (try_syntax, bug_id)])
+    (output, err, ret) = run_hg(cmd)
+    return (ret == 0, err)
 
-def process_patchset(data):
-    """
-    Process, apply, and push the patchset to the correct location.
-    If try_run is specified, it will be pushed to try, and otherwise
-    will be pushed to branch if the credentials are correct.
-
-    process_patchset returns a 2-tuple, (return_code, comment).
-    Comment will be none in the case of an error, as the message is sent
-    out by process_patchset.
-    There should always be a comment posted.
-    """
-    active_repo = os.path.join('active/%s' % (data['branch']))
-    try_run = (data['try_run'] == True)
-    if 'push_url' in data:
-        push_url = data['push_url']
-    else:
-        push_url = data['branch_url']
-    push_url = push_url.replace('https', 'ssh', 1)
-
-    # The comment header. The comment is constructed incrementally at any possible
-    # failure/success point.
-    comment_hdr = ['Autoland Patchset:\n\tPatches: %s\n\tBranch: %s%s'
-            % (', '.join(map(lambda x: str(x['id']), data['patches'])), data['branch'],
-               (' => try' if try_run else ''))]
-    comment = comment_hdr
-
-    class RETRY(Exception):
-        pass
-
-    def cleanup_wrapper():
-        # use an attribute full_clean in order to keep track of
-        # whether or not a full cleanup is required.
-        # This is done since cleanup_wrapper's scope doesn't let us
-        # access process_patchset globals, given the way it is used.
-        if not hasattr(cleanup_wrapper, 'full_clean'):
-            cleanup_wrapper.full_clean = False
-        # only wipe the repositories every second cleanup
-        if cleanup_wrapper.full_clean:
-            clear_branch(data['branch'])
-            log.debug('Wiped repositories for: %s' % data['branch'])
-        else:
-            active_repo = os.path.join('active', data['branch'])
-            update(active_repo)
-            log.debug('Update -C on active repo for: %s' % data['branch'])
-        cleanup_wrapper.full_clean = not cleanup_wrapper.full_clean
-
-        clone_revision = clone_branch(data['branch'], data['branch_url'])
-        if clone_revision == None:
-            # TODO: Handle clone error -- Code Review question
-            log.error('[HgPusher] Clone error...')
-        return
-
-    def apply_patchset(dir, attempt):
-        if not clone_branch(data['branch'], data['branch_url']):
-            msg = 'Branch %s could not be cloned.'
-            log.error('[Branch %s] Could not clone from %s.' \
-                    % (data['branch'], data['branch_url']))
-            comment.append(msg)
-            raise RETRY
-
-        for patch in data['patches']:
-            log.debug("Getting patch %s" % (patch['id']), None)
-            # store patches in 'patches/' below work_dir
-            patch_file = bz.get_patch(patch['id'],
-                    os.path.join('patches'),create_path=True)
-            if not patch_file:
-                msg = 'Patch %s could not be fetched.' % (patch['id'])
-                log.error(msg)
-                if msg not in comment:
-                    comment.append(msg)
-                raise RETRY
-            valid_header = has_valid_header(patch_file)
-            if not try_run and not valid_header:
-                log.error('[Patch %s] Invalid header.' % (patch['id']))
-                # append comment to comment
-                msg = 'Patch %s does not have a properly formatted header.' \
-                        % (patch['id'])
-                if msg not in comment:
-                    comment.append(msg)
-                raise RETRY
-
-            user = None
-            if not valid_header:
-                # This is a try run, since we haven't exited
-                # so author header not needed. Place in the author information
-                # from bugzilla as committer.
-                user='%s <%s>' % (patch['author']['name'], patch['author']['email'])
-
-            (patch_success,err) = import_patch(active_repo, patch_file,
-                    try_run, bug_id=data.get('bug_id', None),
-                    user=user, try_syntax=data.get('try_syntax', None))
-            if patch_success != 0:
-                log.error('[Patch %s] %s' % (patch['id'], err))
-                msg = 'Error applying patch %s to %s.\n%s' \
-                        % (patch['id'], data['branch'], err)
-                if msg not in comment:
-                    comment.append(msg)
-                raise RETRY
-        return True
-
-    if not has_sufficient_permissions(data['patches'],
-            data['branch'] if not try_run else 'try'):
-        msg = 'Insufficient permissions to push to %s' \
-                % ((data['branch'] if not try_run else 'try'))
-        log.error(msg)
-        comment.append(msg)
-        log.debug('Comment "%s" to bug %s' % ('\n'.join(comment), data['bug_id']))
-        return (False, '\n'.join(comment))
-
-    try:
-        # make 3 attempts so that 1st is on active clone,
-        # 2nd attempt will be after an update -c,
-        # and 3rd attempt will be a fresh clone
-        retry(apply_and_push, attempts=3, cleanup=cleanup_wrapper,
-                retry_exceptions=(RETRY,HgUtilError),
-                args=(active_repo, push_url, apply_patchset, 1),
-                kwargs=dict(ssh_username=config['hg_username'],
-                            ssh_key=config['hg_ssh_key'],
-                            force=try_run))     # Force only on try pushes
-        revision = get_revision(active_repo)
-        shutil.rmtree(active_repo)
-    except (HgUtilError, RETRY) as error:
-        msg = 'Could not apply and push patchset:\n%s' % (error)
-        log.error('[PatchSet] %s' % (msg))
-        comment.append(msg)
-        log.debug('Comment "%s" to bug %s' % ('\n'.join(comment), data['bug_id']))
-        return (False, '\n'.join(comment))
-
-    # Successful push. Clear any errors that might be in the comments
-    comment = comment_hdr
-
-    if try_run:
-        # comment to bug with link to the try run on tbpl and in hg
-        comment.append('\tDestination: http://hg.mozilla.org/try/pushloghtml?changeset=%s' % (revision))
-        comment.append('Try run started, revision %s. To cancel or monitor the job, see: %s'
-                % (revision, os.path.join(config['tbpl_url'],
-                                          '?tree=Try&rev=%s' % (revision))) )
-    else:
-        comment.append('\tDestination: http://hg.mozilla.org/%s/pushloghtml?changeset=%s' % (data['branch'],revision))
-        comment.append('Successfully applied and pushed patchset.\n\tRevision: %s'
-                % (revision))
-        if data['branch'] == 'mozilla-central':
-            comment.append('To monitor the commit, see: %s'
-                    % (os.path.join(config['tbpl_url'],
-                       '?tree=Firefox&rev=%s' % (revision))))
-        elif data['branch'] == 'mozilla-inbound':
-            comment.append('To monitor the commit, see: %s'
-                    % (os.path.join(config['tbpl_url'],
-                       '?tree=Mozilla-Inbound&rev=%s' % (revision))))
-
-    log.debug('Comment %s to bug %s' % ('\n'.join(comment), data['bug_id']))
-    return (revision, '\n'.join(comment))
-
+@retriable(retry_exceptions=(RetryException,), attempts=3, sleeptime=5)
 def clone_branch(branch, branch_url):
     """
     Clone tip of the specified branch.
@@ -300,28 +449,30 @@ def clone_branch(branch, branch_url):
     # otherwise, it will be updated.
     clean = os.path.join('clean')
     clean_repo = os.path.join(clean, branch)
-    if not os.access(clean, os.F_OK):
+    if not os.path.isdir(clean):
         os.mkdir(clean)
     try:
         mercurial(remote, clean_repo)
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError, err:
         log.error('[Clone] error cloning \'%s\' into clean repository:\n%s'
-                % (remote, e))
+                % (remote, err))
+        raise RetryException
         return None
     # Clone that clean repository to active and return that revision
     active = os.path.join('active')
     active_repo = os.path.join(active, branch)
-    if not os.access(active, os.F_OK):
+    if not os.path.isdir(active):
         os.mkdir(active)
-    elif os.access(active_repo, os.F_OK):
+    elif os.path.isdir(active_repo):
         shutil.rmtree(active_repo)
     try:
-        print 'Cloning from %s -----> %s' % (clean_repo, active_repo)
+        log.info('Cloning from %s -----> %s' % (clean_repo, active_repo))
         revision = mercurial(clean_repo, active_repo)
         log.info('[Clone] Cloned revision %s' %(revision))
-    except subprocess.CalledProcessError as error:
+    except subprocess.CalledProcessError, err:
         log.error('[Clone] error cloning \'%s\' into active repository:\n%s'
-                % (remote, error))
+                % (remote, err))
+        raise RetryException
         return None
 
     return revision
@@ -331,19 +482,20 @@ def clear_branch(branch):
     Clear the directories for the given branch,
     effictively removing any changes as well as clearing out the clean repo.
     """
-    clean_repo = os.path.join('clean/', branch)
-    active_repo = os.path.join('active/', branch)
-    if os.access(clean_repo, os.F_OK):
+    clean_repo = os.path.join('clean', branch)
+    active_repo = os.path.join('active', branch)
+    try:
         shutil.rmtree(clean_repo)
-    if os.access(active_repo, os.F_OK):
         shutil.rmtree(active_repo)
+    except:
+        pass
 
-def valid_dictionary_structure(d, elements):
+def valid_dictionary_structure(dict_, elements):
     """
     Check that the given dictionary contains all elements.
     """
     for element in elements:
-        if element not in d:
+        if element not in dict_:
             return False
     return True
 
@@ -375,6 +527,7 @@ def valid_job_message(message):
                     return False
     return True
 
+@mq.generate_callback
 def message_handler(message):
     """
     Handles all incoming messages.
@@ -391,44 +544,46 @@ def message_handler(message):
         if not valid_job_message(data):
             # comment?
             # XXX: This is a bit more important than this...
-            print "Not valid job message %s" % data
+            log.error('Not valid job message %s' % (data))
             return
 
         if data['branch'] == 'try':
-            # Change branch, branch_url to pull from mozilla-central on a try run
-            data['push_url'] = data['branch_url']
+            # This is a job that was flagged specifically for try,
+            # not a branch landing on its try iteration.
+            # default to pulling from mozilla-central on a try run
             data['branch'] = 'mozilla-central'
-            data['branch_url'] = data['branch_url'].replace('try','mozilla-central', 1)
+            data['branch_url'] = data['branch_url'].replace('try',
+                                                        'mozilla-central', 1)
+        if 'push_url' not in data:
+            data['push_url'] = data['branch_url']
+        data['push_url'] = data['push_url'].replace('https', 'ssh', 1)
+        data['push_url'] = data['push_url'].replace('http', 'ssh', 1)
 
-        clone_revision = None
-        for attempts in range(3):
-            clone_revision = clone_branch(data['branch'], data['branch_url'])
-            if clone_revision:
-                break
-        if clone_revision == None:
-            log.error('[HgPusher] Clone error...')
-            msg = { 'type' : 'error', 'action' : 'repo.clone',
-                    'patchsetid' : data['patchsetid'],
-                    'bug_id' : data['bug_id'],
-                    'comment' : 'Autoland Error:\n\tCould note clone repository %s' % (data['branch']) }
-            mq.send_message(msg, 'db')
-            return
-        (patch_revision, comment) = process_patchset(data)
-        if patch_revision and patch_revision != clone_revision:
-            # comment already posted in process_patchset
+        patchset = Patchset(data['patchsetid'],
+                        data['bug_id'],
+                        data['patches'],
+                        bool(data['try_run']),
+                        data['push_url'],
+                        data['branch'], data['branch_url'],
+                        data.get('try_syntax', None))
+
+        (patch_revision, comment) = patchset.process()
+        if patch_revision:
             log.info('[Patchset] Successfully applied patchset %s'
                 % (patch_revision))
-            msg = { 'type'  : 'success',
-                    'action': 'try.push' if data['try_run'] else 'branch.push',
-                    'bug_id' : data['bug_id'], 'patchsetid': data['patchsetid'],
+            msg = { 'type'  : 'SUCCESS',
+                    'action': 'TRY.PUSH' if patchset.try_run \
+                                         else 'BRANCH.PUSH',
+                    'bug_id' : patchset.bug_id,
+                    'patchsetid': patchset.num,
                     'revision' : patch_revision,
                     'comment' : comment }
             mq.send_message(msg, 'db')
         else:
-            # error came when applying a ptch.
-            msg = { 'type' : 'error', 'action' : 'patchset.apply',
-                    'patchsetid' : data['patchsetid'],
-                    'bug_id' : data['bug_id'],
+            # error came when processing the patchset
+            msg = { 'type' : 'ERROR', 'action' : 'PATCHSET.APPLY',
+                    'patchsetid' : patchset.num,
+                    'bug_id' : patchset.bug_id,
                     'comment' : comment }
             mq.send_message(msg, 'db')
 
@@ -441,6 +596,7 @@ def main():
     mq.set_host(config['mq_host'])
     mq.set_exchange(config['mq_exchange'])
     mq.connect()
+    mq.declare_and_bind(config['mq_hgp_queue'], 'hgpusher')
 
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
@@ -450,7 +606,7 @@ def main():
                 exit(0)
 
     try:
-        if not os.access(config['work_dir'], os.F_OK):
+        if not os.path.isdir(config['work_dir']):
             os.makedirs(config['work_dir'])
         os.chdir(config['work_dir'])
 
@@ -459,20 +615,23 @@ def main():
         while True:
             hgp_lock = None
             work_dir = 'hgpusher.%d' % (i)
-            if not os.access(work_dir, os.F_OK):
+            if not os.path.isdir(work_dir):
                 os.makedirs(work_dir)
             try:
-                print "Trying dir: %s" % (work_dir)
-                hgp_lock = lock.lock(os.path.join(work_dir, '.lock'), timeout=1)
-                print "Working directory: %s" % (work_dir)
+                log.debug('Trying dir: %s' % (work_dir))
+                hgp_lock = lock.lock(os.path.join(work_dir, '.lock'),
+                        timeout=1)
+                log.debug('Working directory: %s' % (work_dir))
                 os.chdir(work_dir)
                 # get rid of active dir
-                if os.access('active/', os.F_OK):
-                    shutil.rmtree('active/')
-                os.makedirs('active/')
+                try:
+                    shutil.rmtree('active')
+                except OSError:
+                    pass
+                os.makedirs('active')
 
-                mq.listen(queue=config['mq_hgp_queue'], callback=message_handler,
-                        routing_key='hgpusher')
+                mq.listen(queue=config['mq_hgp_queue'],
+                        callback=message_handler)
             except error.LockHeld:
                 # couldn't take the lock, check next workdir
                 i += 1
@@ -480,13 +639,13 @@ def main():
             finally:
                 if hgp_lock:
                     hgp_lock.release()
-                    print "Released working directory"
+                    log.debug('Released working directory')
                     raise
-    except os.error, err:
-        log.error('Error switching to working directory: %s' % (err))
+    except Exception, err:
+        log.error('An error occurred: %s' % (err))
         exit(1)
 
 if __name__ == '__main__':
-    os.chdir(base_dir)
+    os.chdir(BASE_DIR)
     main()
 
