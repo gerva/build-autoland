@@ -188,14 +188,18 @@ def get_review_status(patches):
             if rev['result'] == '+':
                 # Found a passed review, but keep on looking in case there is
                 # a failed or pending review.
+                print "%s r+" % p_id
                 reviewed = True
             elif rev['result'] == '?':
+                print "%s r?" % p_id
                 if p_id not in pending: pending.append(str(p_id))
             else:
                 # non-approval
+                print "%s r-" % p_id
                 if p_id not in failed: failed.append(str(p_id))
         if not reviewed:
             # There is no review on this, so consider it to be pending.
+            print "%s NOT REVIEWED" % p_id
             if p_id not in pending: pending.append(str(p_id))
 
     if failed:
