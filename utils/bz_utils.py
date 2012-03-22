@@ -106,9 +106,10 @@ class bz_util():
         if not email:
             return None
         data = self.request('user/%s' % (email))
-        if 'name' not in data:
+        if 'real_name' not in data:
             return None
         info = {}
+        # drop any [:name] off the real_name
         info['name'] = re.split('\s*\[', data['real_name'], 1)[0]
         info['email'] = data.get('email', email)
         return info
