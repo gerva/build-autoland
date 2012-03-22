@@ -396,13 +396,13 @@ def bz_search_handler():
             if db_branch.approval_required:
                 a_status = get_approval_status(patches, branch)
                 if a_status[0] == 'FAIL':
-                    not_approved.append(('failed', ' '.join(a_status[1])),
-                            branch)
+                    not_approved.append(('failed', ' '.join(a_status[1]),
+                            branch))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'PENDING':
-                    not_approved.append(('missing', ' '.join(a_status[1])),
-                            branch)
+                    not_approved.append(('missing', ' '.join(a_status[1]),
+                            branch))
                     branches.remove(branch)
                     continue
 
@@ -413,10 +413,10 @@ def bz_search_handler():
             comment += "Autoland Warning:\n"
             comment += "Can only land on branches: %s\n" % (' '.join(branches))
         if not_reviewed:
-            comment += "Reviews %s on patches %d\n" % not_reviewed[0]
+            comment += "Reviews %s on patches %s\n" % not_reviewed[0]
         if not_approved:
             for na in not_approved:
-                comment += "Approval %s on patches %d for branch %s\n" % na
+                comment += "Approval %s on patches %s for branch %s\n" % na
         if comment:
             post_comment(comment, ps.bug_id)
 
