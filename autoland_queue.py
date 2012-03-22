@@ -152,13 +152,13 @@ def get_approval_status(patches, branch):
                 # afailed or pending approval.
                 approved = True
             elif app['result'] == '?':
-                if p_id not in pending: pending.append(p_id)
+                if p_id not in pending: pending.append(str(p_id))
             else:
                 # non-approval
-                if p_id not in failed: failed.append(p_id)
+                if p_id not in failed: failed.append(str(p_id))
         if not approved:
             # There is no approval, so consider it pending.
-            if p_id not in pending: pending.append(p_id)
+            if p_id not in pending: pending.append(str(p_id))
 
     if failed:
         return ('FAIL', failed)
@@ -190,13 +190,13 @@ def get_review_status(patches):
                 # a failed or pending review.
                 reviewed = True
             elif rev['result'] == '?':
-                if p_id not in pending: pending.append(p_id)
+                if p_id not in pending: pending.append(str(p_id))
             else:
                 # non-approval
-                if p_id not in failed: failed.append(p_id)
+                if p_id not in failed: failed.append(str(p_id))
         if not reviewed:
             # There is no review on this, so consider it to be pending.
-            if p_id not in pending: pending.append(p_id)
+            if p_id not in pending: pending.append(str(p_id))
 
     if failed:
         return ('FAIL', failed)
@@ -374,6 +374,7 @@ def bz_search_handler():
                 branches.remove(branch)
                 log.error('Branch %s does not exist.' % (branch))
                 continue
+            db_branch = db_branch[0]
 
             # check if branch landing r+'s are present
             # check branch name against try since branch on try iteration
