@@ -430,7 +430,7 @@ def bz_search_handler():
         comment = ''
         if not branches:
             comment += "Autoland Failure:\n"
-        else:
+        elif not_reviewed or not_approved:
             comment += "Autoland Warning:\n"
             comment += "Only landing on branch(es): %s\n" \
                             % (' '.join(branches))
