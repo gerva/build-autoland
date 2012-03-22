@@ -396,6 +396,8 @@ def has_sufficient_permissions(patches, branch):
         for review in patch.reviews:
             if not review.get('reviewer'):
                 continue
+            if not review.get('result') == '+':
+                continue
             if in_ldap_group(review['reviewer'], group):
                 found = True
                 break   # next patch
