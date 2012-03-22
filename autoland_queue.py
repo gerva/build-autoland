@@ -428,7 +428,7 @@ def bz_search_handler():
             log.info('Insert Patchset ID: %s' % (patchset_id))
 
         comment = ''
-        if not branches:
+        if not branches and not duplicates: # don't comment if duplicates
             comment += "Autoland Failure:\n"
         elif not_reviewed or not_approved:
             comment += "Autoland Warning:\n"
