@@ -407,25 +407,25 @@ def bz_search_handler():
                     branches.remove(branch)
                     continue
 
-                # add the one branch to the database for landing
-                job_ps = ps
-                job_ps.branch = branch
-                if db.PatchSetQuery(ps) != None:
-                    # we already have this in the db, don't run this branch
-                    duplicates.append(branch)
-                    branches.remove(branch)
-                    log.debug('Duplicate patchset, removing branch.')
-                    continue
+            # add the one branch to the database for landing
+            job_ps = ps
+            job_ps.branch = branch
+            if db.PatchSetQuery(ps) != None:
+                # we already have this in the db, don't run this branch
+                duplicates.append(branch)
+                branches.remove(branch)
+                log.debug('Duplicate patchset, removing branch.')
+                continue
 
-                # all runs will get a try_run by default for now
-                # if it has a different branch listed, then it will do try run
-                # then go to branch
-                # add try_run attribute here so that PatchSetQuery will match
-                # patchsets in any stage of their lifecycle
-                job_ps.try_run = 1
-                log.info('Inserting job: %s' % (job_ps))
-                patchset_id = db.PatchSetInsert(job_ps)
-                log.info('Insert Patchset ID: %s' % (patchset_id))
+            # all runs will get a try_run by default for now
+            # if it has a different branch listed, then it will do try run
+            # then go to branch
+            # add try_run attribute here so that PatchSetQuery will match
+            # patchsets in any stage of their lifecycle
+            job_ps.try_run = 1
+            log.info('Inserting job: %s' % (job_ps))
+            patchset_id = db.PatchSetInsert(job_ps)
+            log.info('Insert Patchset ID: %s' % (patchset_id))
 
         comment = ''
         if not branches:
