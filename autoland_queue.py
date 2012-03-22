@@ -366,6 +366,7 @@ def bz_search_handler():
         print "Getting branches: %s" % branches
         not_approved = []
         not_reviewed = []
+        duplicates = []
         for branch in tuple(branches):
             # clean out any invalid branch names
             # job will still land to any correct branches
@@ -406,47 +407,51 @@ def bz_search_handler():
                     branches.remove(branch)
                     continue
 
+                # add the one branch to the database for landing
+                job_ps = ps
+                job_ps.branch = branch
+                if db.PatchSetQuery(ps) != None:
+                    # we already have this in the db, don't run this branch
+                    duplicates.append(branch)
+                    branches.remove(branch)
+                    log.debug('Duplicate patchset, removing branch.')
+                    continue
+
+                # all runs will get a try_run by default for now
+                # if it has a different branch listed, then it will do try run
+                # then go to branch
+                # add try_run attribute here so that PatchSetQuery will match
+                # patchsets in any stage of their lifecycle
+                job_ps.try_run = 1
+                log.info('Inserting job: %s' % (job_ps))
+                patchset_id = db.PatchSetInsert(job_ps)
+                log.info('Insert Patchset ID: %s' % (patchset_id))
+
         comment = ''
         if not branches:
             comment += "Autoland Failure:\n"
         else:
             comment += "Autoland Warning:\n"
-            comment += "Can only land on branches: %s\n" % (' '.join(branches))
+            comment += "Only landing on branch(es): %s\n" \
+                            % (' '.join(branches))
+            if duplicates: # only comment about duplicates if still landing
+                comment += "Duplicate landing on branch(es) %s" \
+                                % (' '.join(duplicates))
         if not_reviewed:
-            comment += "Reviews %s on patches %s\n" % not_reviewed[0]
+            comment += "Review %s on patch(es) %s\n" % not_reviewed[0]
         if not_approved:
             for na in not_approved:
-                comment += "Approval %s on patches %s for branch %s\n" % na
+                comment += "Approval %s on patch(es) %s for branch %s\n" % na
         if comment:
             post_comment(comment, ps.bug_id)
 
         if not branches:
+            # remove whiteboard tag
+            bz.remove_whiteboard_tag('\[autoland[^\[\]]*\]', bug_id)
             continue
-
-        ps.branch = ','.join(branches)
-
-        if db.PatchSetQuery(ps) != None:
-            # we already have this in the db, don't add it.
-            # Remove whiteboard tag, but don't add to db and don't comment.
-            log.debug('Duplicate patchset, removing whiteboard tag.')
-            bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']','\]'),
-                    bug_id)
-            continue
-
-        # all runs will get a try_run by default for now
-        # if it has a different branch listed, then it will do try run first
-        # then go to branch
-        # add try_run attribute here so that PatchSetQuery will match patchsets
-        # in any stage of their lifecycle
-        ps.try_run = 1
-
-        log.info('Inserting job: %s' % (ps))
-        patchset_id = db.PatchSetInsert(ps)
-        log.info('Insert Patchset ID: %s' % (patchset_id))
 
         bz.replace_whiteboard_tag('\[autoland[^\[\]]*\]',
                 '[autoland-in-queue]', bug_id)
-
 
 @mq.generate_callback
 def message_handler(message):
