@@ -241,8 +241,6 @@ def get_patchset(bug_id, user_patches=None):
         ]
     """
     patchset = []   # hold the final patchset information
-    reviews = []    # hold the review information corresponding to each patch
-    approvals = []  # hold the approval information corresponding to each patch
 
     # grab the bug data
     bug_data = bz.request('bug/%s' % (bug_id))
@@ -261,8 +259,8 @@ def get_patchset(bug_id, user_patches=None):
                 patch = { 'id' : user_patch,
                           'author' : bz.get_user_info(
                               attachment['attacher']['name']),
-                          'approvals' : [],
-                          'reviews' : [] }
+                          'approvals' : get_approvals(attachment),
+                          'reviews' : get_reviews(attachment) }
                 reviews.append(get_reviews(attachment))
                 approvals.append(get_approvals(attachment))
                 patchset.append(patch)
@@ -287,8 +285,8 @@ def get_patchset(bug_id, user_patches=None):
             patch = { 'id' : attachment['id'],
                       'author' : bz.get_user_info(
                           attachment['attacher']['name']),
-                      'approvals' : [],
-                      'reviews' : [] }
+                      'approvals' : get_reviews(attachment),
+                      'reviews' : get_approvals(attachment) }
             reviews.append(get_reviews(attachment))
             approvals.append(get_approvals(attachment))
             patchset.append(patch)
