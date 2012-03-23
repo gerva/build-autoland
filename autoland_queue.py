@@ -154,7 +154,7 @@ def get_approval_status(patches, branch, perms):
             if app['result'] == '+':
                 # Found an approval, but keep on looking in case there is
                 # afailed or pending approval.
-                if common.in_ldap_group(app['approver'], perms):
+                if common.in_ldap_group(ldap, app['approver'], perms):
                     approved = True
                 else:
                     # XXX: this should probably be 'INVALID', not fail
@@ -197,7 +197,7 @@ def get_review_status(patches, perms):
             if rev['result'] == '+':
                 # Found a passed review, but keep on looking in case there is
                 # a failed or pending review.
-                if common.in_ldap_group(rev['reviewer'], perms):
+                if common.in_ldap_group(ldap, rev['reviewer'], perms):
                     reviewed = True
                 else:
                     # XXX: this should probably be 'INVALID', not fail

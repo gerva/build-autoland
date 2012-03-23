@@ -21,7 +21,7 @@ def get_configuration(conf_file):
 def get_base_dir(path):
     return os.path.abspath(os.path.dirname(os.path.realpath(path)))
 
-def in_ldap_group(email, group):
+def in_ldap_group(ldap, email, group):
     """
     Checks ldap if either email or the bz_email are a member of the group.
     """

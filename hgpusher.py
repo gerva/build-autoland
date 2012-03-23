@@ -383,14 +383,14 @@ def has_sufficient_permissions(patches, branch):
 
     for patch in patches:
         found = False
-        if common.in_ldap_group(patch.author_email, group):
+        if common.in_ldap_group(ldap, patch.author_email, group):
             continue    # next patch
         for review in patch.reviews:
             if not review.get('reviewer'):
                 continue
             if not review.get('result') == '+':
                 continue
-            if common.in_ldap_group(review['reviewer'], group):
+            if common.in_ldap_group(ldap, review['reviewer'], group):
                 found = True
                 log.info("Using reviewer permissions on:\n%s" % (patch))
                 break   # next patch
