@@ -384,13 +384,13 @@ def bz_search_handler():
                 continue
             db_branch = db_branch[0]
 
-            branch_permissions = ldap.get_branch_permissions(branch)
+            branch_perms = ldap.get_branch_permissions(branch)
 
             # check if branch landing r+'s are present
             # check branch name against try since branch on try iteration
             # will also have try_run set to True
             if branch.lower() != 'try':
-                r_status = get_review_status(patches)
+                r_status = get_review_status(patches, branch_perms)
                 if r_status[0] == 'FAIL':
                     ins = ('failed', ' '.join(r_status[1]))
                     if ins not in not_reviewed: not_reviewed.append(ins)
@@ -404,7 +404,7 @@ def bz_search_handler():
 
             # check if approval granted on branch push.
             if db_branch.approval_required:
-                a_status = get_approval_status(patches, branch)
+                a_status = get_approval_status(patches, branch, branch_perms)
                 if a_status[0] == 'FAIL':
                     not_approved.append(('failed', ' '.join(a_status[1]),
                             branch))
@@ -680,9 +680,11 @@ def handle_patchset(patchset):
         return
     branch = branch[0]
 
+    branch_perms = ldap.get_branch_permissions(branch)
+
     # double check if this job should be run
     if patchset.branch.lower() != 'try':
-        r_status = get_review_status(patches)
+        r_status = get_review_status(patches, branch_perms)
         if r_status[0] == 'FAIL':
             log.info('Failed review on patches %s' % (','.join(r_status[1])))
             post_comment('Autoland Failure:\n%sFailed review on patch(es): %s'
@@ -696,7 +698,7 @@ def handle_patchset(patchset):
                             % (' '.join(r_status[1])))
             return
     if branch.approval_required:
-        a_status = get_approval_status(patches, patchset.branch)
+        a_status = get_approval_status(patches, patchset.branch, branch_perms)
         if a_status[0] == 'FAIL':
             log.info('Failed approval on patches %s for branch %s'
                     % (','.join(r_status[1]), patchset.branch))
