@@ -460,10 +460,10 @@ def bz_search_handler():
             log.info('Insert Patchset ID: %s' % (patchset_id))
 
         if not branches:
-            comment.insert(0, 'Autoland Failure:\n')
+            comment.insert(0, 'Autoland Failure:')
         elif branches and comment:
-            comment.insert(0, 'Autoland Warning:\n')
-            comment.insert(1, '\tOnly landing on branch(es): %s' % (branches))
+            comment.insert(0, 'Autoland Warning:\n'
+                              '\tOnly landing on branch(es): %s' % (branches))
 
         post_comment('\n'.join(comment), bug_id)
 
