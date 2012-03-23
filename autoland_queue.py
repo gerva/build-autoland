@@ -462,7 +462,7 @@ def bz_search_handler():
         if not branches:
             comment.insert(0, 'Autoland Failure:')
         elif branches and comment:
-            comment.insert(0, 'Autoland Warning:\n'
+            comment.insert(0, 'Autoland Warning: '
                               'Only landing on branch(es): %s'
                                % (' '.join(branches)))
 
