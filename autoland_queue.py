@@ -461,11 +461,11 @@ def bz_search_handler():
 
         if not branches:
             comment.insert(0, 'Autoland Failure:\n')
-        elif branches and comments:
+        elif branches and comment:
             comment.insert(0, 'Autoland Warning:\n')
             comment.insert(1, '\tOnly landing on branch(es): %s' % (branches))
 
-        post_comment('\n'.join(comments))
+        post_comment('\n'.join(comment))
 
         if not branches:
             # remove whiteboard tag
