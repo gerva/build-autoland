@@ -136,6 +136,8 @@ def get_approval_status(patches, branch, perms):
         * The approval was given by someone with correct permission level
     If any patches failed approval, returns
         ('FAIL', [failed_patches])
+    If any patches have invalid approval, returns
+        ('INVALID', [invalid_patches])
     If any patches are still a? or have no approval flags,
         returns ('PENDING', [pending_patches])
     If all patches have at least one, and only passing approvals,
@@ -144,6 +146,7 @@ def get_approval_status(patches, branch, perms):
     if len(patches) == 0:
         return ('FAIL', None)
     failed = []
+    invalid = []
     pending = []
     for patch in patches:
         approved = False
@@ -158,7 +161,7 @@ def get_approval_status(patches, branch, perms):
                     approved = True
                 else:
                     # XXX: this should probably be 'INVALID', not fail
-                    if p_id not in failed: failed.append(str(p_id))
+                    if p_id not in invalid: invalid.append(str(p_id))
             elif app['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
             else:
@@ -170,6 +173,8 @@ def get_approval_status(patches, branch, perms):
 
     if failed:
         return ('FAIL', failed)
+    if invalid:
+        return ('INVALID', invalid)
     if pending:
         return ('PENDING', pending)
     return ('PASS',)
@@ -181,6 +186,8 @@ def get_review_status(patches, perms):
         * The review was done by someone with the correct permission level
     If any patches failed review, returns
         ('FAIL', [failed_patches])
+    If any patches have invalid review, returns
+        ('INVALID', [invalid_patches])
     If any patches are still r? or have no review flags,
         returns ('PENDING', [pending_patches])
     If all patches have at least one, and only passing reviews,
@@ -189,6 +196,7 @@ def get_review_status(patches, perms):
     if len(patches) == 0:
         return ('FAIL', None)
     failed = []
+    invalid = []
     pending = []
     for patch in patches:
         reviewed = False
@@ -201,7 +209,7 @@ def get_review_status(patches, perms):
                     reviewed = True
                 else:
                     # XXX: this should probably be 'INVALID', not fail
-                    if p_id not in failed: failed.append(str(p_id))
+                    if p_id not in invalid: invalid.append(str(p_id))
             elif rev['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
             else:
@@ -213,6 +221,8 @@ def get_review_status(patches, perms):
 
     if failed:
         return ('FAIL', failed)
+    if invalid:
+        return ('INVALID', invalid)
     if pending:
         return ('PENDING', pending)
     return ('PASS',)
@@ -401,6 +411,11 @@ def bz_search_handler():
                     if ins not in not_reviewed: not_reviewed.append(ins)
                     branches.remove(branch)
                     continue
+                elif r_status[0] == 'INVALID':
+                    ins = ('invalid', ' '.join(r_status[1]))
+                    if ins not in not_reviewed: not_reviewed.append(ins)
+                    branches.remove(branch)
+                    continue
 
             # check if approval granted on branch push.
             if db_branch.approval_required:
@@ -412,6 +427,11 @@ def bz_search_handler():
                     continue
                 elif a_status[0] == 'PENDING':
                     not_approved.append(('missing', ' '.join(a_status[1]),
+                            branch))
+                    branches.remove(branch)
+                    continue
+                elif a_status[0] == 'INVALID':
+                    not_approved.append(('invalid', ' '.join(a_status[1]),
                             branch))
                     branches.remove(branch)
                     continue
@@ -694,7 +714,14 @@ def handle_patchset(patchset):
             log.info('Missing required review for patches %s'
                         % (','.join(r_status[1])))
             post_comment('Autoland Failure:\n'
-                         'Missing require review for patch(es): %s'
+                         'Missing required review for patch(es): %s'
+                            % (' '.join(r_status[1])))
+            return
+        elif r_status[0] == 'INVALID':
+            log.info('Invalid review permissions on patches %s'
+                    % (','.join(r_status[1])))
+            post_comment('Autoland Failure:\n'
+                         'Invalid review for patch(es): %s'
                             % (' '.join(r_status[1])))
             return
     if branch.approval_required:
@@ -710,8 +737,16 @@ def handle_patchset(patchset):
             log.info('Require approval on patches %s for branch %s'
                     % (','.join(r_status[1]), patchset.branch))
             post_comment('Autoland Failure:\n'
-                         'Require approval for branch %s on patch(es): %s'
-                            % (patchset.branch, ' '.join(r_status[1])))
+                         'Missing required approval for branch %s '
+                         'on patch(es): %s'
+                         % (patchset.branch, ' '.join(r_status[1])))
+            return
+        elif r_status[0] == 'INVALID':
+            log.info('Invalid approval permissions on patches %s'
+                    % (','.join(r_status[1])))
+            post_comment('Autoland Failure:\n'
+                         'Invalid approval for patch(es): %s'
+                            % (' '.join(r_status[1])))
             return
 
     if patchset.try_run:
