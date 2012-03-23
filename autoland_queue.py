@@ -6,7 +6,7 @@ import logging.handlers
 import datetime
 import urllib2
 
-from utils import mq_utils, bz_utils, common
+from utils import mq_utils, bz_utils, ldap_utils, common
 base_dir = common.get_base_dir(__file__)
 import site
 site.addsitedir('%s/../../lib/python' % (base_dir))
@@ -20,6 +20,8 @@ LOGFILE = os.path.join(base_dir, 'autoland_queue.log')
 LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
+ldap = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
+        config['ldap_bind_dn'], config['ldap_password'])
 config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
 bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],
@@ -127,9 +129,11 @@ def get_approvals(attachment):
                     })
     return approvals
 
-def get_approval_status(patches, branch):
+def get_approval_status(patches, branch, perms):
     """
     Returns the approval status of the patchset for the given branch.
+    Ensures that any passed approvals are also VALID approvals
+        * The approval was given by someone with correct permission level
     If any patches failed approval, returns
         ('FAIL', [failed_patches])
     If any patches are still a? or have no approval flags,
@@ -150,7 +154,11 @@ def get_approval_status(patches, branch):
             if app['result'] == '+':
                 # Found an approval, but keep on looking in case there is
                 # afailed or pending approval.
-                approved = True
+                if common.in_ldap_group(app['approver'], perms):
+                    approved = True
+                else:
+                    # XXX: this should probably be 'INVALID', not fail
+                    if p_id not in failed: failed.append(str(p_id))
             elif app['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
             else:
@@ -166,9 +174,11 @@ def get_approval_status(patches, branch):
         return ('PENDING', pending)
     return ('PASS',)
 
-def get_review_status(patches):
+def get_review_status(patches, perms):
     """
     Returns the review status of the patchset.
+    Ensures that any passed reviews are also VALID reviews
+        * The review was done by someone with the correct permission level
     If any patches failed review, returns
         ('FAIL', [failed_patches])
     If any patches are still r? or have no review flags,
@@ -176,7 +186,6 @@ def get_review_status(patches):
     If all patches have at least one, and only passing reviews,
         returns ('PASS',)
     """
-
     if len(patches) == 0:
         return ('FAIL', None)
     failed = []
@@ -188,18 +197,18 @@ def get_review_status(patches):
             if rev['result'] == '+':
                 # Found a passed review, but keep on looking in case there is
                 # a failed or pending review.
-                print "%s r+" % p_id
-                reviewed = True
+                if common.in_ldap_group(rev['reviewer'], perms):
+                    reviewed = True
+                else:
+                    # XXX: this should probably be 'INVALID', not fail
+                    if p_id not in failed: failed.append(str(p_id))
             elif rev['result'] == '?':
-                print "%s r?" % p_id
                 if p_id not in pending: pending.append(str(p_id))
             else:
                 # non-approval
-                print "%s r-" % p_id
                 if p_id not in failed: failed.append(str(p_id))
         if not reviewed:
             # There is no review on this, so consider it to be pending.
-            print "%s NOT REVIEWED" % p_id
             if p_id not in pending: pending.append(str(p_id))
 
     if failed:
@@ -378,6 +387,8 @@ def bz_search_handler():
                 log.error('Branch %s does not exist.' % (branch))
                 continue
             db_branch = db_branch[0]
+
+            branch_permissions = ldap.get_branch_permissions(branch)
 
             # check if branch landing r+'s are present
             # check branch name against try since branch on try iteration

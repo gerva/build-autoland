@@ -369,14 +369,6 @@ def has_valid_header(filename):
                 break
     return False
 
-def in_ldap_group(email, group):
-    """
-    Checks ldap if either email or the bz_email are a member of the group.
-    """
-    bz_email = ldap.get_bz_email(email)
-    return ldap.is_member_of_group(email, group) \
-            or (bz_email and ldap.is_member_of_group(bz_email, group))
-
 def has_sufficient_permissions(patches, branch):
     """
     Searches LDAP to see if any of the users (author, reviewers) have
@@ -391,15 +383,16 @@ def has_sufficient_permissions(patches, branch):
 
     for patch in patches:
         found = False
-        if in_ldap_group(patch.author_email, group):
+        if common.in_ldap_group(patch.author_email, group):
             continue    # next patch
         for review in patch.reviews:
             if not review.get('reviewer'):
                 continue
             if not review.get('result') == '+':
                 continue
-            if in_ldap_group(review['reviewer'], group):
+            if common.in_ldap_group(review['reviewer'], group):
                 found = True
+                log.info("Using reviewer permissions on:\n%s" % (patch))
                 break   # next patch
         if not found:
             return False
