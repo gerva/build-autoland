@@ -411,8 +411,8 @@ def bz_search_handler():
                     continue
                 elif r_status[0] == 'INVALID':
                     comment.append('Reviewer doesn\'t have correct '
-                                   'permissions on patch(es): %s'
-                                    % (' '.join(r_status[1])))
+                                   'permissions for %s on patch(es): %s'
+                                    % (branch, ' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
 
@@ -463,7 +463,8 @@ def bz_search_handler():
             comment.insert(0, 'Autoland Failure:')
         elif branches and comment:
             comment.insert(0, 'Autoland Warning:\n'
-                              'Only landing on branch(es): %s' % (branches))
+                              'Only landing on branch(es): %s'
+                               % (' '.join(branches)))
 
         post_comment('\n\t'.join(comment), bug_id)
 
