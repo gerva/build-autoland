@@ -20,9 +20,9 @@ LOGFILE = os.path.join(base_dir, 'autoland_queue.log')
 LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
+config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
 ldap = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
         config['ldap_bind_dn'], config['ldap_password'])
-config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
 bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
@@ -270,8 +270,6 @@ def get_patchset(bug_id, user_patches=None):
                               attachment['attacher']['name']),
                           'approvals' : get_approvals(attachment),
                           'reviews' : get_reviews(attachment) }
-                reviews.append(get_reviews(attachment))
-                approvals.append(get_approvals(attachment))
                 patchset.append(patch)
                 # remove the patch from user_patches to check all listed
                 # patches were pulled
@@ -296,8 +294,6 @@ def get_patchset(bug_id, user_patches=None):
                           attachment['attacher']['name']),
                       'approvals' : get_reviews(attachment),
                       'reviews' : get_approvals(attachment) }
-            reviews.append(get_reviews(attachment))
-            approvals.append(get_approvals(attachment))
             patchset.append(patch)
 
     if len(patchset) == 0:
