@@ -381,9 +381,7 @@ def bz_search_handler():
         # get the branches
         branches = get_branch_from_tag(tag)
         print "Getting branches: %s" % branches
-        not_approved = []
-        not_reviewed = []
-        duplicates = []
+        comment = []
         for branch in tuple(branches):
             # clean out any invalid branch names
             # job will still land to any correct branches
@@ -404,16 +402,23 @@ def bz_search_handler():
                 if r_status[0] == 'FAIL':
                     ins = ('failed', ' '.join(r_status[1]))
                     if ins not in not_reviewed: not_reviewed.append(ins)
+                    comment.append('Review failed on patch(es): %s'
+                                    % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif r_status[0] == 'PENDING':
                     ins = ('missing', ' '.join(r_status[1]))
                     if ins not in not_reviewed: not_reviewed.append(ins)
+                    comment.append('Review not yet given on patch(es): %s'
+                                    % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif r_status[0] == 'INVALID':
                     ins = ('invalid', ' '.join(r_status[1]))
                     if ins not in not_reviewed: not_reviewed.append(ins)
+                    comment.append('Reviewer doesn\'t have correct '
+                                   'permissions on patch(es): %s'
+                                    % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
 
@@ -423,16 +428,25 @@ def bz_search_handler():
                 if a_status[0] == 'FAIL':
                     not_approved.append(('failed', ' '.join(a_status[1]),
                             branch))
+                    comment.append('Approval failed on patch(es): %s'
+                                    % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'PENDING':
                     not_approved.append(('missing', ' '.join(a_status[1]),
                             branch))
+                    comment.append('Approval not yet given for branch %s'
+                                   'on patch(es): %s'
+                                    % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'INVALID':
                     not_approved.append(('invalid', ' '.join(a_status[1]),
                             branch))
+                    comment.append('Approver for branch %s '
+                                   'doesn\'t have correct '
+                                   'permissions on patch(es): %s'
+                                    % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
 
@@ -456,31 +470,20 @@ def bz_search_handler():
             patchset_id = db.PatchSetInsert(job_ps)
             log.info('Insert Patchset ID: %s' % (patchset_id))
 
-        comment = ''
-        if not branches and not duplicates: # don't comment if duplicates
-            comment += "Autoland Failure:\n"
-        elif not_reviewed or not_approved:
-            comment += "Autoland Warning:\n"
-            comment += "Only landing on branch(es): %s\n" \
-                            % (' '.join(branches))
-            if duplicates: # only comment about duplicates if still landing
-                comment += "Duplicate landing on branch(es) %s" \
-                                % (' '.join(duplicates))
-        if not_reviewed:
-            comment += "Review %s on patch(es) %s\n" % not_reviewed[0]
-        if not_approved:
-            for na in not_approved:
-                comment += "Approval %s on patch(es) %s for branch %s\n" % na
-        if comment:
-            post_comment(comment, ps.bug_id)
+        if not branches:
+            comment.insert(0, 'Autoland Failure:\n')
+        elif branches and comments:
+            comment.insert(0, 'Autoland Warning:\n')
+            comment.insert(1, '\tOnly landing on branch(es): %s' % (branches))
+
+        post_comment('\n'.join(comments))
 
         if not branches:
             # remove whiteboard tag
             bz.remove_whiteboard_tag('\[autoland[^\[\]]*\]', bug_id)
-            continue
-
-        bz.replace_whiteboard_tag('\[autoland[^\[\]]*\]',
-                '[autoland-in-queue]', bug_id)
+        else:
+            bz.replace_whiteboard_tag('\[autoland[^\[\]]*\]',
+                    '[autoland-in-queue]', bug_id)
 
 @mq.generate_callback
 def message_handler(message):
