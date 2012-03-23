@@ -400,22 +400,16 @@ def bz_search_handler():
             if branch.lower() != 'try':
                 r_status = get_review_status(patches, branch_perms)
                 if r_status[0] == 'FAIL':
-                    ins = ('failed', ' '.join(r_status[1]))
-                    if ins not in not_reviewed: not_reviewed.append(ins)
                     comment.append('Review failed on patch(es): %s'
                                     % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif r_status[0] == 'PENDING':
-                    ins = ('missing', ' '.join(r_status[1]))
-                    if ins not in not_reviewed: not_reviewed.append(ins)
                     comment.append('Review not yet given on patch(es): %s'
                                     % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif r_status[0] == 'INVALID':
-                    ins = ('invalid', ' '.join(r_status[1]))
-                    if ins not in not_reviewed: not_reviewed.append(ins)
                     comment.append('Reviewer doesn\'t have correct '
                                    'permissions on patch(es): %s'
                                     % (' '.join(r_status[1])))
@@ -426,23 +420,17 @@ def bz_search_handler():
             if db_branch.approval_required:
                 a_status = get_approval_status(patches, branch, branch_perms)
                 if a_status[0] == 'FAIL':
-                    not_approved.append(('failed', ' '.join(a_status[1]),
-                            branch))
                     comment.append('Approval failed on patch(es): %s'
                                     % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'PENDING':
-                    not_approved.append(('missing', ' '.join(a_status[1]),
-                            branch))
                     comment.append('Approval not yet given for branch %s'
                                    'on patch(es): %s'
                                     % (' '.join(r_status[1])))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'INVALID':
-                    not_approved.append(('invalid', ' '.join(a_status[1]),
-                            branch))
                     comment.append('Approver for branch %s '
                                    'doesn\'t have correct '
                                    'permissions on patch(es): %s'
@@ -455,7 +443,8 @@ def bz_search_handler():
             job_ps.branch = branch
             if db.PatchSetQuery(ps) != None:
                 # we already have this in the db, don't run this branch
-                duplicates.append(branch)
+                comment.append('Already landing patches %s on branch %s.'
+                                % (' '.join(r_status[1]), branch))
                 branches.remove(branch)
                 log.debug('Duplicate patchset, removing branch.')
                 continue
