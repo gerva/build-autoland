@@ -68,7 +68,7 @@ class RepoCleanup(object):
 
         # get rid of any imported and qpush-ed patches
         log.debug('qpop -a and rm -rf .hg/patches')
-        (success, err, ret) = run_hg(['qpop', '-a'])
+        (success, err, ret) = run_hg(['qpop', '-a', '-R', active_repo])
         run_cmd(['rm', '-rf', os.path.join(active_repo, '.hg/patches')])
 
         log.debug('Update -C on active repo for: %s' % (self.branch))
@@ -424,6 +424,10 @@ def import_patch(repo, patch, try_run, bug_id, user=None,
     if try_syntax == None:
         try_syntax = ''
     if try_run:
+        # try run, so in case this is imported with a header, we need some
+        # way of getting a new revision # so that 'hg out' will be able
+        # to work.
+        cmd.extend(['-D'])
         # if there is no try_syntax,
         # try defaults will be triggered by 'try:'
         if config.get('staging', False):
