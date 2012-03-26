@@ -158,9 +158,11 @@ def get_approval_status(patches, branch, perms):
                 # Found an approval, but keep on looking in case there is
                 # afailed or pending approval.
                 if common.in_ldap_group(ldap, app['approver'], perms):
+                    log.info("PERMISSIONS: Approver %s has valid %s "
+                             "permissions for branch %s"
+                             % (app['approver'], perms, branch))
                     approved = True
                 else:
-                    # XXX: this should probably be 'INVALID', not fail
                     if p_id not in invalid: invalid.append(str(p_id))
             elif app['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
@@ -206,9 +208,10 @@ def get_review_status(patches, perms):
                 # Found a passed review, but keep on looking in case there is
                 # a failed or pending review.
                 if common.in_ldap_group(ldap, rev['reviewer'], perms):
+                    log.info("PERMISSIONS: Reviewer %s has valid %s "
+                             "permissions" % (app['approver'], perms))
                     reviewed = True
                 else:
-                    # XXX: this should probably be 'INVALID', not fail
                     if p_id not in invalid: invalid.append(str(p_id))
             elif rev['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
@@ -444,7 +447,7 @@ def bz_search_handler():
             if db.PatchSetQuery(ps) != None:
                 # we already have this in the db, don't run this branch
                 comment.append('Already landing patches %s on branch %s.'
-                                % (' '.join(r_status[1]), branch))
+                                % (job_ps.patches, branch))
                 branches.remove(branch)
                 log.debug('Duplicate patchset, removing branch.')
                 continue
@@ -693,7 +696,7 @@ def handle_patchset(patchset):
         return
     branch = branch[0]
 
-    branch_perms = ldap.get_branch_permissions(branch)
+    branch_perms = ldap.get_branch_permissions(branch.name)
 
     # double check if this job should be run
     if patchset.branch.lower() != 'try':
@@ -805,7 +808,7 @@ def handle_comments():
                 with open('failed_comments.log', 'a') as fc_log:
                     fc_log.write('%s\n\t%s'
                             % (comment.bug, comment.comment))
-            except IOError, err:
+            except IOError:
                 log.error('Unable to append to failed comments file.')
             log.error("Could not post comment to bug %s. Dropping comment: %s"
                     % (comment.bug, comment.comment))
