@@ -157,10 +157,10 @@ def get_approval_status(patches, branch, perms):
             if app['result'] == '+':
                 # Found an approval, but keep on looking in case there is
                 # afailed or pending approval.
-                if common.in_ldap_group(ldap, app['approver'], perms):
+                if common.in_ldap_group(ldap, app['approver']['email'], perms):
                     log.info("PERMISSIONS: Approver %s has valid %s "
                              "permissions for branch %s"
-                             % (app['approver'], perms, branch))
+                             % (app['approver']['email'], perms, branch))
                     approved = True
                 else:
                     if p_id not in invalid: invalid.append(str(p_id))
@@ -207,9 +207,9 @@ def get_review_status(patches, perms):
             if rev['result'] == '+':
                 # Found a passed review, but keep on looking in case there is
                 # a failed or pending review.
-                if common.in_ldap_group(ldap, rev['reviewer'], perms):
+                if common.in_ldap_group(ldap, rev['reviewer']['email'], perms):
                     log.info("PERMISSIONS: Reviewer %s has valid %s "
-                             "permissions" % (app['approver'], perms))
+                             "permissions" % (rev['reviewer']['email'], perms))
                     reviewed = True
                 else:
                     if p_id not in invalid: invalid.append(str(p_id))
