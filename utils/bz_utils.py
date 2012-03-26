@@ -46,7 +46,7 @@ class bz_util():
             data = result.read()
             return json.loads(data)
         except HTTP_EXCEPTIONS, err:
-            log.error('REQUEST ERROR: %s: %s' % (err, url))
+            log.error('REQUEST ERROR: %s: %s\n%s' % (err, url, err.read()))
             raise
 
     def put_request(self, path, data, retries, interval):
