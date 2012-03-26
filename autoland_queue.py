@@ -332,7 +332,6 @@ def bz_search_handler():
 
     for (bug_id, whiteboard) in bugs:
         tag = get_first_autoland_tag(whiteboard)
-        #log.debug('Bug %s with tag %s' % (bug_id, tag))
 
         if tag == None or re.search('in-queue', tag) != None:
             # Strange that it showed up if None
@@ -340,7 +339,6 @@ def bz_search_handler():
 
         # get the branches
         branches = get_branch_from_tag(tag)
-        log.debug('Flagged for landing on branches: %s' % (branches))
         if not branches:
             # this was probably flagged [autoland], since it was picked up
             # and doesn't have a branch attached.
@@ -837,7 +835,7 @@ def main():
     mq.connect()
     mq.declare_and_bind(config['mq_autoland_queue'], 'db')
 
-    log.setLevel(logging.DEBUG)
+    log.setLevel(logging.INFO)
     LOGHANDLER.setFormatter(LOGFORMAT)
     log.addHandler(LOGHANDLER)
 
@@ -847,6 +845,8 @@ def main():
                 # purge the autoland queue
                 mq.purge_queue(config['mq_autoland_queue'], prompt=True)
                 exit(0)
+            elif arg == '--debug' or arg == '-d':
+                log.setLevel(logging.DEBUG)
 
     while True:
         # search bugzilla for any relevant bugs
