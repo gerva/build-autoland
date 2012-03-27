@@ -92,7 +92,8 @@ class Patch(object):
         self.num = patch['id']
         self.author_name = patch['author']['name']
         self.author_email = patch['author']['email']
-        self.reviews = patch.get('reviews', None)
+        self.reviews = patch.get('reviews')
+        self.approvals = patch.get('approvals')
         self.file = None
         self.user = None
 
@@ -390,7 +391,7 @@ def has_sufficient_permissions(patches, branch):
                 continue
             if not review.get('result') == '+':
                 continue
-            if common.in_ldap_group(ldap, review['reviewer'], group):
+            if common.in_ldap_group(ldap, review['reviewer']['email'], group):
                 found = True
                 log.info("Using reviewer permissions on:\n%s" % (patch))
                 break   # next patch
