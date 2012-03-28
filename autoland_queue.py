@@ -406,19 +406,25 @@ def bz_search_handler():
             if branch.lower() != 'try':
                 r_status = get_review_status(patches, branch_perms)
                 if r_status[0] == 'FAIL':
-                    comment.append('Review failed on patch(es): %s'
-                                    % (' '.join(r_status[1])))
+                    cmnt = 'Review failed on patch(es): %s' \
+                                % (' '.join(r_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
                     branches.remove(branch)
                     continue
                 elif r_status[0] == 'PENDING':
-                    comment.append('Review not yet given on patch(es): %s'
-                                    % (' '.join(r_status[1])))
+                    cmnt = 'Review not yet given on patch(es): %s' \
+                                    % (' '.join(r_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
                     branches.remove(branch)
                     continue
                 elif r_status[0] == 'INVALID':
-                    comment.append('Reviewer doesn\'t have correct '
-                                   'permissions for %s on patch(es): %s'
-                                    % (branch, ' '.join(r_status[1])))
+                    cmnt = 'Reviewer doesn\'t have correct ' \
+                           'permissions for %s on patch(es): %s' \
+                                % (branch, ' '.join(r_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
                     branches.remove(branch)
                     continue
 
@@ -426,21 +432,27 @@ def bz_search_handler():
             if db_branch.approval_required:
                 a_status = get_approval_status(patches, branch, branch_perms)
                 if a_status[0] == 'FAIL':
-                    comment.append('Approval failed on patch(es): %s'
-                                    % (' '.join(a_status[1])))
+                    cmnt = 'Approval failed on patch(es): %s' \
+                                    % (' '.join(a_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'PENDING':
-                    comment.append('Approval not yet given for branch %s'
-                                   'on patch(es): %s'
-                                    % (branch, ' '.join(a_status[1])))
+                    cmnt = 'Approval not yet given for branch %s ' \
+                                   'on patch(es): %s' \
+                                    % (branch, ' '.join(a_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'INVALID':
-                    comment.append('Approver for branch %s '
-                                   'doesn\'t have correct '
-                                   'permissions on patch(es): %s'
-                                    % (branch, ' '.join(a_status[1])))
+                    cmnt = 'Approver for branch %s ' \
+                                   'doesn\'t have correct ' \
+                                   'permissions on patch(es): %s' \
+                                    % (branch, ' '.join(a_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
                     branches.remove(branch)
                     continue
 
