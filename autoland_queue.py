@@ -433,14 +433,14 @@ def bz_search_handler():
                 elif a_status[0] == 'PENDING':
                     comment.append('Approval not yet given for branch %s'
                                    'on patch(es): %s'
-                                    % (' '.join(a_status[1])))
+                                    % (branch, ' '.join(a_status[1])))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'INVALID':
                     comment.append('Approver for branch %s '
                                    'doesn\'t have correct '
                                    'permissions on patch(es): %s'
-                                    % (' '.join(a_status[1])))
+                                    % (branch, ' '.join(a_status[1])))
                     branches.remove(branch)
                     continue
 
