@@ -438,12 +438,15 @@ def bz_search_handler():
         elif branches and comment:
 # XXX: This will be changed to a 'clear' command
             for patch in patch_set.patchList():
-                BZ.autoland_update_attachment({'status':'failed',
+                BZ.autoland_update_attachment({'status':'running',
                                                    'attach_id':patch})
             comment.insert(0, 'Autoland Warning:\n'
                               '\tOnly landing on branch(es): %s'
                                % (' '.join(branches)))
 
+        for patch in patch_set.patchList():
+            BZ.autoland_update_attachment({'status':'running',
+                                               'attach_id':patch})
         post_comment('\n\t'.join(comment), bug_id)
 
 @mq_utils.generate_callback

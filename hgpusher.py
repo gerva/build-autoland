@@ -630,7 +630,7 @@ def main():
                 os.makedirs('active')
 
                 MQ.listen(queue=config['mq_hgp_queue'],
-                        callback=message_handler, routing_key='hgpusher')
+                        callback=message_handler)
             except error.LockHeld:
                 # couldn't take the lock, check next workdir
                 i += 1
