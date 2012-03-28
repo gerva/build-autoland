@@ -30,7 +30,7 @@ class ldap_util():
         self.connection.simple_bind(self.bind_dn, self.password)
         self.connection.result(timeout=10) # get rid of bind result
 
-    @retriable(cleanup=self._connect)
+    #@retriable(cleanup=ldap_util._connect)
     def search(self, bind, filterstr, attrlist=None,
             scope=ldap.SCOPE_SUBTREE):
         """
@@ -42,11 +42,16 @@ class ldap_util():
         Note that failures will be common, since connection closes at a certain
         point of inactivity, and needs to be re-established. Expect 2 attempts.
         """
-        self._bind()
-        self.connection.search(bind, scope,
-                filterstr=filterstr, attrlist=attrlist)
-        result = self.connection.result(timeout=10)
-        log.info('Success')
+        for i in range(5):
+            try:
+                self._bind()
+                self.connection.search(bind, scope,
+                        filterstr=filterstr, attrlist=attrlist)
+                result = self.connection.result(timeout=10)
+                log.info('Success')
+            except:
+                self._connect()
+
         return result
 
     def get_group_members(self, group):
