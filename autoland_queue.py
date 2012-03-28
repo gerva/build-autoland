@@ -348,11 +348,13 @@ def bz_search_handler():
             # clean out any invalid branch names
             # job will still land to any correct branches
             if db.BranchQuery(Branch(name=branch)) == None:
-                branches.remove(branch)
                 log.error('Branch %s does not exist.' % (branch))
+                branches.remove(branch)
 
         # If there are no correct or permissive branches, go to next bug
         if not branches:
+            bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']', '\]'),
+                    bug_id)
             continue
 
         log.debug('Found and processing tag %s' % (tag))
@@ -463,8 +465,8 @@ def bz_search_handler():
         if not branches:
             comment.insert(0, 'Autoland Failure:')
         elif branches and comment:
-            comment.insert(0, 'Autoland Warning: '
-                              'Only landing on branch(es): %s'
+            comment.insert(0, 'Autoland Warning:\n'
+                              '\tOnly landing on branch(es): %s'
                                % (' '.join(branches)))
 
         post_comment('\n\t'.join(comment), bug_id)
