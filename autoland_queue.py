@@ -24,13 +24,13 @@ LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
 
 config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
 BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
-LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
-        config['ldap_bind_dn'], config['ldap_password']),
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'],
         jsonrpc_url=config['bz_jsonrpc_url'],
         jsonrpc_login=config['bz_jsonrpc_login'],
         jsonrpc_password=config['bz_jsonrpc_password'])
+LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
+        config['ldap_bind_dn'], config['ldap_password'])
 MQ = mq_utils.mq_util()
 DB = DBHandler(config['databases_autoland_db_url'])
 
