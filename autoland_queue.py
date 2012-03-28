@@ -1,3 +1,7 @@
+import site
+site.addsitedir('vendor')
+site.addsitedir('vendor/lib/python')
+
 import time
 import os, sys
 import logging
@@ -5,9 +9,8 @@ import logging.handlers
 import datetime
 import urllib2
 
-from utils import mq_utils, bz_utils, common
+from utils import mq_utils, bz_utils, ldap_utils, common
 base_dir = common.get_base_dir(__file__)
-import site
 site.addsitedir('%s/../../lib/python' % (base_dir))
 
 from utils.db_handler import DBHandler, PatchSet, Branch, Comment
@@ -21,6 +24,8 @@ LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
 
 config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
 BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
+LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
+        config['ldap_bind_dn'], config['ldap_password']),
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'],
         jsonrpc_url=config['bz_jsonrpc_url'],
@@ -46,33 +51,148 @@ def get_reviews(attachment):
     for flag in attachment['flags']:
         for review_type in ('review', 'superreview', 'ui-review'):
             if flag.get('name') == review_type:
-                reviews.append({'type':review_type,
-                                'reviewer':flag['setter']['name'],
-                                'result':flag['status']})
+                reviews.append({
+                        'type':review_type,
+                        'reviewer':bz.get_user_info(flag['setter']['name']),
+                        'result':flag['status']
+                        })
                 break
     return reviews
 
-def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
+def get_approvals(attachment):
+    """
+    Takes attachment JSON, returns a list of approvals.
+    Each approval (in the list) is a dictionary containing:
+        - Approval type
+        - Approver
+        - Approval Result (+, -, ?)
+    """
+    print "Checking attachment"
+    print attachment
+    approvals = []
+    app_re = re.compile(r'approval-')
+    if not 'flags' in attachment:
+        print "no flags"
+        return approvals
+    for flag in attachment['flags']:
+        print "Flag: %s" % (flag)
+        if app_re.match(flag.get('name')):
+            approvals.append({
+                    'type': app_re.sub('', flag.get('name')),
+                    'approver':bz.get_user_info(flag['setter']['name']),
+                    'result':flag['status']
+                    })
+    return approvals
+
+def get_approval_status(patches, branch, perms):
+    """
+    Returns the approval status of the patchset for the given branch.
+    Ensures that any passed approvals are also VALID approvals
+        * The approval was given by someone with correct permission level
+    If any patches failed approval, returns
+        ('FAIL', [failed_patches])
+    If any patches have invalid approval, returns
+        ('INVALID', [invalid_patches])
+    If any patches are still a? or have no approval flags,
+        returns ('PENDING', [pending_patches])
+    If all patches have at least one, and only passing approvals,
+        returns ('PASS',)
+    """
+    if len(patches) == 0:
+        return ('FAIL', None)
+    failed = []
+    invalid = []
+    pending = []
+    for patch in patches:
+        approved = False
+        p_id = patch['id']
+        for app in patch['approvals']:
+            if app['type'].strip().lower() != branch:
+                continue
+            if app['result'] == '+':
+                # Found an approval, but keep on looking in case there is
+                # afailed or pending approval.
+                if common.in_ldap_group(LDAP, app['approver']['email'], perms):
+                    log.info("PERMISSIONS: Approver %s has valid %s "
+                             "permissions for branch %s"
+                             % (app['approver']['email'], perms, branch))
+                    approved = True
+                else:
+                    if p_id not in invalid: invalid.append(str(p_id))
+            elif app['result'] == '?':
+                if p_id not in pending: pending.append(str(p_id))
+            else:
+                # non-approval
+                if p_id not in failed: failed.append(str(p_id))
+        if not approved:
+            # There is no approval, so consider it pending.
+            if p_id not in pending: pending.append(str(p_id))
+
+    if failed:
+        return ('FAIL', failed)
+    if invalid:
+        return ('INVALID', invalid)
+    if pending:
+        return ('PENDING', pending)
+    return ('PASS',)
+
+def get_review_status(patches, perms):
+    """
+    Returns the review status of the patchset.
+    Ensures that any passed reviews are also VALID reviews
+        * The review was done by someone with the correct permission level
+    If any patches failed review, returns
+        ('FAIL', [failed_patches])
+    If any patches have invalid review, returns
+        ('INVALID', [invalid_patches])
+    If any patches are still r? or have no review flags,
+        returns ('PENDING', [pending_patches])
+    If all patches have at least one, and only passing reviews,
+        returns ('PASS',)
+    """
+    if len(patches) == 0:
+        return ('FAIL', None)
+    failed = []
+    invalid = []
+    pending = []
+    for patch in patches:
+        reviewed = False
+        p_id = patch['id']
+        for rev in patch['reviews']:
+            if rev['result'] == '+':
+                # Found a passed review, but keep on looking in case there is
+                # a failed or pending review.
+                if common.in_ldap_group(LDAP, rev['reviewer']['email'], perms):
+                    log.info("PERMISSIONS: Reviewer %s has valid %s "
+                             "permissions" % (rev['reviewer']['email'], perms))
+                    reviewed = True
+                else:
+                    if p_id not in invalid: invalid.append(str(p_id))
+            elif rev['result'] == '?':
+                if p_id not in pending: pending.append(str(p_id))
+            else:
+                # non-approval
+                if p_id not in failed: failed.append(str(p_id))
+        if not reviewed:
+            # There is no review on this, so consider it to be pending.
+            if p_id not in pending: pending.append(str(p_id))
+
+    if failed:
+        return ('FAIL', failed)
+    if invalid:
+        return ('INVALID', invalid)
+    if pending:
+        return ('PENDING', pending)
+    return ('PASS',)
+
+def get_patchset(bug_id, user_patches=None):
     """
     If user_patches specified, only fetch the information on those specific
     patches from the bug.
     If user_patches not specified, fetch the information on all patches from
     the bug.
 
-    Try runs will contain all non-obsolete patches posted on the bug, no
-    matter the state of the reviews. This means that it will take even
-    patches that are R- but non-obsolete.
-
-    Pushes to branch will contain all patches that are posted to the bug
-    which have R+ on any R that is set. If there are any non-obsolete
-    bugs that have R-, the push will fail since the bug may not be
-    complete.
-
-    The review_comment parameter defaults to True, and is used to specify
-    if a comment should be posted on review failures on not. This has a
-    somewhat specific use case:
-        When checking if a flagged job should be picked up and put into the
-        queue, no comment should be posted if there are missing/bad reviews.
+    The returned patchset will return ALL patches, reviews, and approvals.
 
     Return value is of the JSON structure:
         [
@@ -80,9 +200,15 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
               'author' : { 'name' : 'Name',
                            'email' : 'me@email.com' },
               'reviews' : [
-                    { 'reviewer' : { 'name' : 'Rev. Name',
-                                     'email' : 'rev@email.com' },
+                    { 'reviewer' : 'email',
                       'type' : 'superreview',
+                      'result' : '+'
+                    },
+                    { ... }
+                ],
+              'approvals' : [
+                    { 'approver' : 'email',
+                      'type' : 'mozilla-beta',
                       'result' : '+'
                     },
                     { ... }
@@ -92,7 +218,6 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
         ]
     """
     patchset = []   # hold the final patchset information
-    reviews = []    # hold the review information corresponding to each patch
 
     # grab the bug data
     bug_data = BZ.request('bug/%s' % (bug_id))
@@ -101,7 +226,7 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
 
     if user_patches:
         # user-specified patches, need to pull them in that set order
-        user_patches = list(user_patches)    # take a local copy, passed byref
+        user_patches = list(user_patches)    # take a local copy, passed by ref
         for user_patch in tuple(user_patches):
             for attachment in bug_data['attachments']:
                 if attachment['id'] != user_patch or \
@@ -109,10 +234,10 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                         attachment['is_obsolete']:
                     continue
                 patch = { 'id' : user_patch,
-                          'author' :
-                              BZ.get_user_info(attachment['attacher']['name']),
-                          'reviews' : [] }
-                reviews.append(get_reviews(attachment))
+                          'author' : BZ.get_user_info(
+                              attachment['attacher']['name']),
+                          'approvals' : get_approvals(attachment),
+                          'reviews' : get_reviews(attachment) }
                 patchset.append(patch)
                 # remove the patch from user_patches to check all listed
                 # patches were pulled
@@ -133,38 +258,16 @@ def get_patchset(bug_id, try_run, user_patches=None, review_comment=True):
                 # not a valid patch to be pulled
                 continue
             patch = { 'id' : attachment['id'],
-                      'author' :
-                          BZ.get_user_info(attachment['attacher']['name']),
-                      'reviews' : [] }
-            reviews.append(get_reviews(attachment))
+                      'author' : bz.get_user_info(
+                          attachment['attacher']['name']),
+                      'approvals' : get_reviews(attachment),
+                      'reviews' : get_approvals(attachment) }
             patchset.append(patch)
-
-    # check the reviews, based on try, etc, etc.
-    for patch, revs in zip(patchset, reviews):
-        if try_run:
-            # on a try run, take all non-obsolete patches
-            patch['reviews'] = revs
-            continue
-
-        # this is a branch push
-        if not revs:
-            if review_comment:
-                post_comment('Autoland Failure\nPatch %s requires review+ '
-                             'to push to branch.' % (patch['id']), bug_id)
-                return None
-        for rev in revs:
-            if rev['result'] != '+':    # Bad review, fail
-                if review_comment:
-                    post_comment('Autoland Failure\nPatch %s has a '
-                                 'non-passing review. Requires review+ '
-                                 'to push to branch.'
-                                 % (patch['id']), bug_id)
-                return None
-                rev['reviewer'] = BZ.get_user_info(rev['reviewer'])
-            patch['reviews'] = revs
 
     if len(patchset) == 0:
         post_comment('Autoland Failure\n There are no patches to run.', bug_id)
+        patchset = None
+
     return patchset
 
 def bz_search_handler():
@@ -189,6 +292,7 @@ def bz_search_handler():
         branches = bug.get('branches', 'try').split(',')
         branches = [x.strip() for x in branches]
         branches = [y for y in branches if y != '']
+        branches.sort()
 
         for branch in tuple(branches):
             # clean out any invalid branch names
@@ -204,9 +308,9 @@ def bz_search_handler():
                 log.info('Branch %s is not enabled.' % (branch))
         if not branches:
             log.info('Bug %s had no correct branches flagged' % (bug_id))
+# XXX: Update extension
             continue
 
-        # patches are taken from the 'attachments' element of bug
         # the only patches that should be taken are the patches with status
         # 'waiting'
         patch_group = bug.get('attachments')
@@ -220,26 +324,127 @@ def bz_search_handler():
         # all runs will get a try_run by default for now
         patch_set.try_syntax = patch_group[0]['try_syntax']
         patch_set.bug_id = bug_id
-        patch_set.branch = ','.join(branches)  # branches have been filtered
-        patch_set.patches = [x['id'] for x in patch_group]
 
-        if DB.PatchSetQuery(patch_set) != None:
-            # we already have this in the db, don't add it.
-            # but this shouldn't have been picked up, since it cannot
-            # be changed of status back to 'waiting'
+        # check patch reviews & permissions
+        patches = get_patchset(patch_set.bug_id,
+                               [x['id'] for x in patch_group])
+        if not patches:
+            # do not have patches to push, kick it out of the queue
+# XXX UPDATE THE EXTENSION XXX
+            log.error('No valid patches attached, nothing for '
+                      'Autoland to do here, removing this bug from the queue.')
             continue
-        # add try_run attribute here so that PatchSetQuery will match patchsets
-        # in any stage of their lifecycle
-        patch_set.try_run = 1
 
         patch_set.author = patch_group[0]['who']
+        ps.patches = ','.join(str(x['id']) for x in patches)
 
-        log.info('Inserting job: %s' % (patch_set))
-        patchset_id = DB.PatchSetInsert(patch_set)
+        # get the branches
+        comment = []
+        for branch in tuple(branches):
+            # clean out any invalid branch names
+            # job will still land to any correct branches
+            db_branch = DB.BranchQuery(Branch(name=branch))
+            if db_branch == None:
+                branches.remove(branch)
+                log.error('Branch %s does not exist.' % (branch))
+                continue
+            db_branch = db_branch[0]
 
-        for patch in patch_set.patchList():
-            BZ.autoland_update_attachment({'status':'running',
-                                               'attach_id':patch})
+            branch_perms = LDAP.get_branch_permissions(branch)
+
+            # check if branch landing r+'s are present
+            # check branch name against try since branch on try iteration
+            # will also have try_run set to True
+            if branch.lower() != 'try':
+                r_status = get_review_status(patches, branch_perms)
+                if r_status[0] == 'FAIL':
+                    cmnt = 'Review failed on patch(es): %s' \
+                                % (' '.join(r_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
+                    branches.remove(branch)
+                    continue
+                elif r_status[0] == 'PENDING':
+                    cmnt = 'Review not yet given on patch(es): %s' \
+                                    % (' '.join(r_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
+                    branches.remove(branch)
+                    continue
+                elif r_status[0] == 'INVALID':
+                    cmnt = 'Reviewer doesn\'t have correct ' \
+                           'permissions for %s on patch(es): %s' \
+                                % (branch, ' '.join(r_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
+                    branches.remove(branch)
+                    continue
+
+            # check if approval granted on branch push.
+            if db_branch.approval_required:
+                a_status = get_approval_status(patches, branch, branch_perms)
+                if a_status[0] == 'FAIL':
+                    cmnt = 'Approval failed on patch(es): %s' \
+                                    % (' '.join(a_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
+                    branches.remove(branch)
+                    continue
+                elif a_status[0] == 'PENDING':
+                    cmnt = 'Approval not yet given for branch %s ' \
+                                   'on patch(es): %s' \
+                                    % (branch, ' '.join(a_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
+                    branches.remove(branch)
+                    continue
+                elif a_status[0] == 'INVALID':
+                    cmnt = 'Approver for branch %s ' \
+                                   'doesn\'t have correct ' \
+                                   'permissions on patch(es): %s' \
+                                    % (branch, ' '.join(a_status[1]))
+                    if cmnt not in comment:
+                        comment.append(cmnt)
+                    branches.remove(branch)
+                    continue
+
+            # add the one branch to the database for landing
+            job_ps = patch_set
+            job_ps.branch = branch
+            if DB.PatchSetQuery(job_ps) != None:
+                # we already have this in the db, don't run this branch
+                comment.append('Already landing patches %s on branch %s.'
+                                % (job_ps.patches, branch))
+                branches.remove(branch)
+                log.debug('Duplicate patchset, removing branch.')
+                continue
+
+            # all runs will get a try_run by default for now
+            # if it has a different branch listed, then it will do try run
+            # then go to branch
+            # add try_run attribute here so that PatchSetQuery will match
+            # patchsets in any stage of their lifecycle
+            job_ps.try_run = 1
+            log.info('Inserting job: %s' % (job_ps))
+            patchset_id = DB.PatchSetInsert(job_ps)
+            log.info('Insert Patchset ID: %s' % (patchset_id))
+
+        if not branches:
+# XXX: This will be changed to a 'clear' command
+            for patch in patch_set.patchList():
+                BZ.autoland_update_attachment({'status':'failed',
+                                                   'attach_id':patch})
+            comment.insert(0, 'Autoland Failure:')
+        elif branches and comment:
+# XXX: This will be changed to a 'clear' command
+            for patch in patch_set.patchList():
+                BZ.autoland_update_attachment({'status':'failed',
+                                                   'attach_id':patch})
+            comment.insert(0, 'Autoland Warning:\n'
+                              '\tOnly landing on branch(es): %s'
+                               % (' '.join(branches)))
+
+        post_comment('\n\t'.join(comment), bug_id)
 
 @mq_utils.generate_callback
 def message_handler(message):
@@ -343,6 +548,7 @@ def message_handler(message):
                 patch_set.push_time = None
                 log.debug('Flag patchset %s revision %s for push to branch.'
                         % (ps.id, ps.revision))
+                db.PatchSetUpdate(ps)
             else:
                 # close it!
                 for patch in patch_set.patchList:
@@ -429,6 +635,13 @@ def handle_patchset(patchset):
                               'result' : '+'
                             },
                             { ... }
+                        ],
+                      'approvals' : [
+                            { 'approver' : { 'name' : 'App. Name',
+                                             'email' : 'app@email.com' },
+                              'type' : 'mozilla-esr10',
+                              'result' : '+'
+                            }
                         ]
                     },
                     { ... }
@@ -441,10 +654,15 @@ def handle_patchset(patchset):
 
     # Check permissions & patch set again, in case it has changed
     # since the job was put on the queue.
-    patches = get_patchset(patchset.bug_id, patchset.try_run,
-                           user_patches=patchset.patchList())
-    patches = patchset.patchList()
-    # get branch information so that message can contain branch_url
+    patches = get_patchset(patchset.bug_id, user_patches=patchset.patchList())
+    if patches == None:
+        # Comment already posted in get_patchset. Full patchset couldn't be
+        # processed.
+        log.info("Patchset not valid. Deleting from database.")
+        DB.PatchSetDelete(patchset)
+        return
+
+    # get branch information
     branch = DB.BranchQuery(Branch(name=patchset.branch))
     if not branch:
         # error, branch non-existent
@@ -453,29 +671,96 @@ def handle_patchset(patchset):
         DB.PatchSetDelete(patchset)
         return
     branch = branch[0]
-    jobs = DB.BranchRunningJobsQuery(Branch(name=patchset.branch))
-    log.debug("Running jobs on %s: %s" % (patchset.branch, jobs))
-    b = DB.BranchQuery(Branch(name='try'))[0]
-    log.debug("Threshold for %s: %s" % (patchset.branch, b.threshold))
-    if jobs < b.threshold:
-        message = { 'job_type':'patchset', 'bug_id':patchset.bug_id,
-                'user':patchset.author,
-                'branch_url':branch.repo_url,
-                'branch':patchset.branch, 'try_run':patchset.try_run,
-                'try_syntax':patchset.try_syntax,
-                'patchsetid':patchset.id, 'patches':patches }
-        if patchset.try_run == 1:
-            tb = DB.BranchQuery(Branch(name='try'))
-            if tb: tb = tb[0]
-            else: return
-        log.info("SENDING MESSAGE: %s" % (message))
-        MQ.send_message(message, routing_key='hgpusher')
-        patchset.push_time = datetime.datetime.utcnow()
-        DB.PatchSetUpdate(patchset)
-    else:
-        log.info("Too many jobs running right now, will have to wait.")
-        patchset.retries += 1
-        DB.PatchSetUpdate(patchset)
+
+    branch_perms = LDAP.get_branch_permissions(branch.name)
+
+    # double check if this job should be run
+    if patchset.branch.lower() != 'try':
+        r_status = get_review_status(patches, branch_perms)
+        if r_status[0] == 'FAIL':
+            log.info('Failed review on patches %s' % (','.join(r_status[1])))
+            post_comment('Autoland Failure:\n%sFailed review on patch(es): %s'
+                            % (' '.join(r_status[1])))
+            return
+        elif r_status[0] == 'PENDING':
+            log.info('Missing required review for patches %s'
+                        % (','.join(r_status[1])))
+            post_comment('Autoland Failure:\n'
+                         'Missing required review for patch(es): %s'
+                            % (' '.join(r_status[1])))
+            return
+        elif r_status[0] == 'INVALID':
+            log.info('Invalid review permissions on patches %s'
+                    % (','.join(r_status[1])))
+            post_comment('Autoland Failure:\n'
+                         'Invalid review for patch(es): %s'
+                            % (' '.join(r_status[1])))
+            return
+    if branch.approval_required:
+        a_status = get_approval_status(patches, patchset.branch, branch_perms)
+        if a_status[0] == 'FAIL':
+            log.info('Failed approval on patches %s for branch %s'
+                    % (','.join(r_status[1]), patchset.branch))
+            post_comment('Autoland Failure:\n'
+                        'Failed approval for branch %s on patch(es): %s'
+                            % (patchset.branch, ' '.join(a_status[1])))
+            return
+        elif a_status[0] == 'PENDING':
+            log.info('Require approval on patches %s for branch %s'
+                    % (','.join(r_status[1]), patchset.branch))
+            post_comment('Autoland Failure:\n'
+                         'Missing required approval for branch %s '
+                         'on patch(es): %s'
+                         % (patchset.branch, ' '.join(a_status[1])))
+            return
+        elif r_status[0] == 'INVALID':
+            log.info('Invalid approval permissions on patches %s'
+                    % (','.join(r_status[1])))
+            post_comment('Autoland Failure:\n'
+                         'Invalid approval for patch(es): %s'
+                            % (' '.join(a_status[1])))
+            return
+
+    if patchset.try_run:
+        running = DB.BranchRunningJobsQuery(Branch(name='try'))
+        log.debug("Running jobs on try: %s" % (running))
+
+        # get try branch info
+        try_branch = DB.BranchQuery(Branch(name='try'))
+        if try_branch: try_branch = try_branch[0]
+        else: return
+
+        log.debug("Threshold for try: %s" % (try_branch.threshold))
+
+        # ensure try is not above threshold
+        if running >= try_branch.threshold:
+            log.info("Too many jobs running on try right now.")
+            return
+        push_url = try_branch.repo_url
+    else:   # branch landing
+        running = DB.BranchRunningJobsQuery(Branch(name=patchset.branch),
+                                            count_try=False)
+        log.debug("Running jobs on %s: %s" % (patchset.branch, running))
+
+        log.debug("Threshold for branch: %s" % (branch.threshold))
+
+        # ensure branch not above threshold
+        if running >= branch.threshold:
+            log.info("Too many jobs landing on %s right now." % (branch.name))
+            return
+        push_url = branch.repo_url
+
+    message = { 'job_type':'patchset', 'bug_id':patchset.bug_id,
+            'branch_url':branch.repo_url,
+            'push_url':push_url,
+            'branch':patchset.branch, 'try_run':patchset.try_run,
+            'try_syntax':patchset.try_syntax,
+            'patchsetid':patchset.id, 'patches':patches }
+
+    log.info("Sending job to hgpusher: %s" % (message))
+    MQ.send_message(message, routing_key='hgpusher')
+    patchset.push_time = datetime.datetime.utcnow()
+    DB.PatchSetUpdate(patchset)
 
 def handle_comments():
     """
@@ -499,7 +784,7 @@ def handle_comments():
                 with open('failed_comments.log', 'a') as fc_log:
                     fc_log.write('%s\n\t%s'
                             % (comment.bug, comment.comment))
-            except IOError, err:
+            except IOError:
                 log.error('Unable to append to failed comments file.')
             log.error("Could not post comment to bug %s. Dropping comment: %s"
                     % (comment.bug, comment.comment))
@@ -528,7 +813,7 @@ def main():
     MQ.connect()
     MQ.declare_and_bind(config['mq_autoland_queue'], 'db')
 
-    log.setLevel(logging.DEBUG)
+    log.setLevel(logging.INFO)
     LOGHANDLER.setFormatter(LOGFORMAT)
     log.addHandler(LOGHANDLER)
 
@@ -538,6 +823,8 @@ def main():
                 # purge the autoland queue
                 MQ.purge_queue(config['mq_autoland_queue'], prompt=True)
                 exit(0)
+            elif arg == '--debug' or arg == '-d':
+                log.setLevel(logging.DEBUG)
 
     while True:
         # search bugzilla for any relevant bugs
@@ -559,13 +846,13 @@ def main():
                 log.info('stdout: %s' % (out))
                 log.info('stderr: %s' % (err))
 
+        # take care of any comments that couldn't previously be posted
+        handle_comments()
+
         while time.time() < next_poll:
             patchset = DB.PatchSetGetNext()
             if patchset != None:
                 handle_patchset(patchset)
-
-            # take care of any comments that couldn't previously be posted
-            handle_comments()
 
             # loop while we've got incoming messages
             while MQ.get_message(config['mq_autoland_queue'], message_handler):

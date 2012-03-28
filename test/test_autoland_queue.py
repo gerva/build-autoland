@@ -1,3 +1,7 @@
+import site
+site.addsitedir('vendor')
+site.addsitedir('vendor/lib/python')
+
 import unittest
 import re
 import sys
@@ -9,7 +13,7 @@ from autoland_queue import get_first_autoland_tag, get_patches_from_tag,\
         get_branch_from_tag, get_reviews, get_patchset, bz_search_handler,\
         message_handler, DBHandler, PatchSet, bz_utils, config,\
         handle_patchset, get_try_syntax_from_tag, main,\
-        handle_comments, Comment
+        handle_comments, Comment, get_approvals, has_approval
 from utils.db_handler import PatchSet
 
 TEST_DB = 'sqlite:///test/autoland.sqlite'
@@ -103,6 +107,96 @@ class TestAutolandQueue(unittest.TestCase):
         for i in range(2):
             results.append(get_reviews(bug['attachments'][i]))
             self.assertEqual(results[i], expected[i])
+
+    def testGetApprovals(self):
+        a_data = []
+        expected = []
+        a_data.append({'flags' : [
+            {'name':'approval-mozilla-beta',
+             'setter':{'name':'setbyme'},
+             'status':'+'},
+            {'name':'review'},
+            {'name':'approval-mozilla-esr10',
+             'setter':{'name':'setbyme'},
+             'status':'?'}
+            ]})
+        expected.append([{'type':'mozilla-beta',
+                          'approver':'setbyme',
+                          'result':'+'},
+                         {'type':'mozilla-esr10',
+                          'approver':'setbyme',
+                          'result':'?'}])
+        results = []
+        for i in range(len(a_data)):
+            results.append(get_approvals(a_data[i]))
+            self.assertEqual(results[i], expected[i])
+
+    def testHasApproval(self):
+        patch_sets = []
+        # single patch, one duplicate entry with different result
+        patch_sets.append([
+            { 'id' : 1,
+              'approvals' : [
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-beta',
+                    'result' : '+' },
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-beta',
+                    'result' : '?' },
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-aurora',
+                    'result' : '+' }
+                  ]}
+            ])
+        # two patches, conflicting reviews on same branch.
+        patch_sets.append([
+            { 'id' : 2,
+              'approvals' : [
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-aurora',
+                    'result' : '+' },
+                  { 'approver' : 'email',
+                    'type' : 'mozilla=beta',
+                    'result' : '-' }
+                  ]
+            },
+            { 'id' : 3,
+              'approvals' : [
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-aurora',
+                    'result' : '+' },
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-beta',
+                    'result' : '+' }
+                  ]
+            }
+            ])
+        # approval flag altogether missing on one branch
+        patch_sets.append([
+            { 'id' : 4,
+              'approvals' : [
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-aurora',
+                    'result' : '+' },
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-beta',
+                    'result' : '+' },
+                  ]
+              },
+            { 'id' : 5,
+              'approvals' : [
+                  { 'approver' : 'email',
+                    'type' : 'mozilla-aurora',
+                    'result' : '+' }
+                  ]
+            }
+            ])
+        # no specified approvals
+        self.assertFalse(has_approval([{'id':0}], 'mozilla-beta'))
+        for i in range(len(patch_sets)):
+            self.assertTrue(has_approval(patch_sets[i], 'mozilla-aurora'))
+            self.assertFalse(has_approval(patch_sets[i], 'mozilla-beta'))
+            self.assertFalse(has_approval(patch_sets[i], 'mozilla-esr10'))
 
     def testGetPatchSet(self):
         with mock.patch('utils.bz_utils.bz_util.request') as bz_rq:

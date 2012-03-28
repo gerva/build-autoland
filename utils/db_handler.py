@@ -1,3 +1,7 @@
+import site
+site.addsitedir('vendor')
+site.addsitedir('vendor/lib/python')
+
 try:
     import simplejson as json
 except ImportError:
@@ -171,14 +175,18 @@ class DBHandler(object):
             return map(lambda x: Branch(*x), rows)
         return None
 
-    def BranchRunningJobsQuery(self, branch):
+    def BranchRunningJobsQuery(self, branch, count_try=True):
         """
         Returns the count of jobs running on the Branch object passed in
+        count_try specifies whether or not patch_sets with "try_run" set
+        should be counted.
         """
         connection = self.engine.connect()
         r = self.scheduler_db_meta.tables['patch_sets']
         q = r.select()
         q = q.where(r.c.branch.like(branch.name))
+        if not count_try:
+            q = q.where(r.c.try_run == 0)
         q = q.where(r.c.push_time != None)
         q = q.where(r.c.completion_time == None)
         q = q.count()
@@ -425,6 +433,8 @@ class Branch(object):
         self.repo_url = str(repo_url) if repo_url else repo_url
         self.threshold = threshold
         self.status = str(status) if status else status
+        self.push_to_closed = push_to_closed
+        self.approval_required = approval_required
 
     def __repr__(self):
         return str(self.toDict())
@@ -447,6 +457,9 @@ class Branch(object):
             d['threshold'] = self.threshold
         if self.status:
             d['status'] = self.status
+        d['push_to_closed'] = self.push_to_closed
+        d['approval_required'] = self.approval_required
+
         return d
 
 class PatchSet(object):

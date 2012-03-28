@@ -2,6 +2,7 @@
 
 Branches table
 - push to closed tree, default false
+    - Pending on checking tree status
 - approval required, default ? -> check at patch level for specific approval on a patch
 
 Patch_sets tabl

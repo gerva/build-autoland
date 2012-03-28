@@ -1,3 +1,7 @@
+import site
+site.addsitedir('vendor')
+site.addsitedir('vendor/lib/python')
+
 try:
     import json
 except ImportError:
@@ -28,12 +32,12 @@ logging.basicConfig(format=FORMAT)
 
 class SchedulerDBPoller():
 
-    def __init__(self, branch, cache_dir, config,
+    def __init__(self, branch, cache_dir, configs,
                 user=None, password=None, dry_run=False,
                 verbose=False, messages=True):
 
         self.config = ConfigParser.ConfigParser()
-        self.config.read(config)
+        self.config.read(configs)
         self.branch = branch
         self.cache_dir = cache_dir
         self.dry_run = dry_run
@@ -703,7 +707,8 @@ if __name__ == '__main__':
                         help="the branch revision to poll",
                         required=True)
     parser.add_argument("-c", "--config-file",
-                        dest="config",
+                        dest="configs",
+                        action="append",
                         help="config file to use for accessing db",
                         required=True)
     parser.add_argument("-u", "--user",
@@ -756,9 +761,11 @@ if __name__ == '__main__':
 
     options, args = parser.parse_known_args()
 
-    if not os.path.exists(options.config):
-        log.debug("Config file does not exist or is not valid.")
-        sys.exit(1)
+    for config in options.configs:
+        if not os.path.exists(config):
+            log.error("Config file %s does not exist or is not valid."
+                        % config)
+            sys.exit(1)
 
     lock_file = None
     try:
@@ -792,7 +799,8 @@ if __name__ == '__main__':
             else:
                 poller = SchedulerDBPoller(
                             branch=options.branch,
-                            cache_dir=options.cache_dir, config=options.config,
+                            cache_dir=options.cache_dir,
+                            configs=options.configs,
                             user=options.user, password=options.password,
                             dry_run=options.dry_run, verbose=options.verbose,
                             messages=options.messages)

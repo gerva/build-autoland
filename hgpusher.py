@@ -1,3 +1,7 @@
+import site
+site.addsitedir('vendor')
+site.addsitedir('vendor/lib/python')
+
 import os, sys
 import re
 import subprocess
@@ -8,14 +12,12 @@ from mercurial import error, lock   # For lockfile on working dirs
 
 from utils import bz_utils, mq_utils, common, ldap_utils
 BASE_DIR = common.get_base_dir(__file__)
-import site
 site.addsitedir('%s/../../lib/python' % (BASE_DIR))
 
 from util.hg import mercurial, apply_and_push, HgUtilError, \
                     update, get_revision
 from util.retry import retry, retriable
 from util.commands import run_cmd
-
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(
@@ -47,6 +49,14 @@ RE_COMMITLINE = re.compile(r'^[^#$]+')
 ##
 
 class RetryException(Exception):
+    """
+    Used to trigger a retry when using retriable functions.
+    """
+    pass
+class FailException(Exception):
+    """
+    Used to fail immediately without retry when using retriable functions.
+    """
     pass
 
 class RepoCleanup(object):
@@ -75,7 +85,7 @@ class RepoCleanup(object):
 
         # get rid of any imported and qpush-ed patches
         log.debug('qpop -a and rm -rf .hg/patches')
-        (success, err, ret) = run_hg(['qpop', '-a'])
+        (success, err, ret) = run_hg(['qpop', '-a', '-R', active_repo])
         run_cmd(['rm', '-rf', os.path.join(active_repo, '.hg/patches')])
 
         log.debug('Update -C on active repo for: %s' % (self.branch))
@@ -99,7 +109,8 @@ class Patch(object):
         self.num = patch['id']
         self.author_name = patch['author']['name']
         self.author_email = patch['author']['email']
-        self.reviews = patch.get('reviews', None)
+        self.reviews = patch.get('reviews')
+        self.approvals = patch.get('approvals')
         self.file = None
         self.user = None
 
@@ -133,6 +144,12 @@ class Patch(object):
 class Patchset(object):
     def __init__(self, ps_id, bug_id, patches, try_run, push_url,
             branch, branch_url, user, try_syntax=None):
+        """
+        Creates a Patchset object.
+        Fills in an active_repo field to point to a directory for
+            the specified branch.
+        If try_syntax not specified, uses the default.
+        """
         self.num = ps_id
         self.bug_id = bug_id
         self.patches = [Patch(patch) for patch in patches]
@@ -143,7 +160,7 @@ class Patchset(object):
         if try_syntax != None:
             self.try_syntax = try_syntax
         else:
-            self.try_syntax = "-b do -p all -u none -t none"
+            self.try_syntax = config['hg_try_syntax']
 
         self.active_repo = os.path.join('active/%s' % (branch))
         self.comment = ''
@@ -209,7 +226,7 @@ class Patchset(object):
             shutil.rmtree(self.active_repo)
             for patch in self.patches:
                 patch.delete()
-        except (HgUtilError, RetryException), err:
+        except (HgUtilError, RetryException, FailException), err:
             # Failed
             log.error('[PatchSet] Could not be applied and pushed.\n%s'
                     % (err))
@@ -256,7 +273,7 @@ class Patchset(object):
         First verify the patchset, and then import & commit each patch.
         If anything fails, RetryException will be raised.
         """
-        self.verify()                   # verify patches can apply cleanly
+        self.verify()
         self.finish_import()
 
     def verify(self):
@@ -276,16 +293,23 @@ class Patchset(object):
                 self.add_comment('Patch %s couldn\'t be fetched.'
                         % (patch.num))
                 raise RetryException
+
             # 2. has valid headers. If try run, put user data into patch.user
             valid_header = has_valid_header(patch.file)
             if not valid_header:
-                if not self.try_run:
+                # check branch name, since self.try_run is set to true even if
+                # it is a try run for a branch landing.
+                # On a branch landing, valid headers are required. This means
+                # that the job should fail on the try run.
+                if not self.branch.lower() == 'try':
                     log.error('[Patch %s] Invalid header.' % (patch.num))
                     self.add_comment('Patch %s doesn\'t have '
-                            'a properly formatted header.'
+                            'a properly formatted header. To land to branches,'
+                            ' patches must contain a header with a commit '
+                            'message and user field.'
                             % (patch.num))
-                    # XXX: is this a RetryException case, or a fail case
-                    raise RetryException
+                    raise FailException
+                # on a try run, fill in the user information
                 patch.fill_user()
             # 3. patch applies using 'qimport; qpush'
             (patch_success, err) = import_patch(self.active_repo,
@@ -386,10 +410,10 @@ def has_sufficient_permissions(user_email, branch):
     group = LDAP.get_branch_permissions(branch)
     if group == None:
         return False
-    return in_ldap_group(user_email, group)
+    return common.in_ldap_group(LDAP, user_email, group)
 
 def import_patch(repo, patch, try_run, bug_id, user=None,
-        try_syntax="-b do -p all -u none -t none"):
+        try_syntax=config['hg_try_syntax']):
     """
     Import patch file patch into a mercurial queue.
 
@@ -413,7 +437,7 @@ def import_patch(repo, patch, try_run, bug_id, user=None,
     (output, err, ret) = run_hg(cmd)
     return (ret == 0, err)
 
-@retriable(retry_exceptions=(RetryException), attempts=3, sleeptime=5)
+@retriable(retry_exceptions=(RetryException,), attempts=3, sleeptime=5)
 def clone_branch(branch, branch_url):
     """
     Clone tip of the specified branch.
@@ -522,14 +546,16 @@ def message_handler(message):
             return
 
         if data['branch'] == 'try':
-            # Change branch, branch_url to pull from m-c on a try run
-            data['push_url'] = data['branch_url']
+            # This is a job that was flagged specifically for try,
+            # not a branch landing on its try iteration.
+            # default to pulling from mozilla-central on a try run
             data['branch'] = 'mozilla-central'
             data['branch_url'] = data['branch_url'].replace('try',
                                                         'mozilla-central', 1)
         if 'push_url' not in data:
             data['push_url'] = data['branch_url']
         data['push_url'] = data['push_url'].replace('https', 'ssh', 1)
+        data['push_url'] = data['push_url'].replace('http', 'ssh', 1)
 
         patchset = Patchset(data['patchsetid'],
                         data['bug_id'],
