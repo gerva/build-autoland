@@ -427,20 +427,20 @@ def bz_search_handler():
                 a_status = get_approval_status(patches, branch, branch_perms)
                 if a_status[0] == 'FAIL':
                     comment.append('Approval failed on patch(es): %s'
-                                    % (' '.join(r_status[1])))
+                                    % (' '.join(a_status[1])))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'PENDING':
                     comment.append('Approval not yet given for branch %s'
                                    'on patch(es): %s'
-                                    % (' '.join(r_status[1])))
+                                    % (' '.join(a_status[1])))
                     branches.remove(branch)
                     continue
                 elif a_status[0] == 'INVALID':
                     comment.append('Approver for branch %s '
                                    'doesn\'t have correct '
                                    'permissions on patch(es): %s'
-                                    % (' '.join(r_status[1])))
+                                    % (' '.join(a_status[1])))
                     branches.remove(branch)
                     continue
 
@@ -730,7 +730,7 @@ def handle_patchset(patchset):
                     % (','.join(r_status[1]), patchset.branch))
             post_comment('Autoland Failure:\n'
                         'Failed approval for branch %s on patch(es): %s'
-                            % (patchset.branch, ' '.join(r_status[1])))
+                            % (patchset.branch, ' '.join(a_status[1])))
             return
         elif a_status[0] == 'PENDING':
             log.info('Require approval on patches %s for branch %s'
@@ -738,14 +738,14 @@ def handle_patchset(patchset):
             post_comment('Autoland Failure:\n'
                          'Missing required approval for branch %s '
                          'on patch(es): %s'
-                         % (patchset.branch, ' '.join(r_status[1])))
+                         % (patchset.branch, ' '.join(a_status[1])))
             return
         elif r_status[0] == 'INVALID':
             log.info('Invalid approval permissions on patches %s'
                     % (','.join(r_status[1])))
             post_comment('Autoland Failure:\n'
                          'Invalid approval for patch(es): %s'
-                            % (' '.join(r_status[1])))
+                            % (' '.join(a_status[1])))
             return
 
     if patchset.try_run:
