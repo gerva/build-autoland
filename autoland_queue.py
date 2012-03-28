@@ -31,7 +31,7 @@ BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
         jsonrpc_password=config['bz_jsonrpc_password'])
 LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
         config['ldap_bind_dn'], config['ldap_password'])
-MQ = mq_utils.mq_util()
+MQ = mq_utils.mq_util(config['mq_host'])
 DB = DBHandler(config['databases_autoland_db_url'])
 
 if config.get('staging', False):
@@ -811,7 +811,6 @@ def post_comment(comment, bug_id):
         DB.CommentInsert(cmnt)
 
 def main():
-    MQ.set_host(config['mq_host'])
     MQ.set_exchange(config['mq_exchange'])
     MQ.connect()
     MQ.declare_and_bind(config['mq_autoland_queue'], 'db')
