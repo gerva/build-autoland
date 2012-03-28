@@ -870,13 +870,13 @@ def main():
                 log.info('stdout: %s' % (out))
                 log.info('stderr: %s' % (err))
 
+        # take care of any comments that couldn't previously be posted
+        handle_comments()
+
         while time.time() < next_poll:
             patchset = db.PatchSetGetNext()
             if patchset != None:
                 handle_patchset(patchset)
-
-            # take care of any comments that couldn't previously be posted
-            handle_comments()
 
             # loop while we've got incoming messages
             while mq.get_message(config['mq_autoland_queue'],
