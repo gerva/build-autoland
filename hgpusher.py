@@ -503,7 +503,7 @@ def clone_branch(branch, branch_url):
     if not os.path.isdir(clean):
         os.mkdir(clean)
     try:
-        mercurial(remote, clean_repo)
+        mercurial(remote, clean_repo, update_dest=False)
     except subprocess.CalledProcessError, err:
         log.error('[Clone] error cloning \'%s\' into clean repository:\n%s'
                 % (remote, err))
