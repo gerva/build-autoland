@@ -18,9 +18,14 @@ log = logging.getLogger(__name__)
 class mq_util(object):
     connection = None
     channel = None
+    def __init__(self, host=None, vhost=None,
+                 username=None, password=None, exchange=None):
+        self.log = log
+        self.last_message = None
 
-    def __init__(self, host, exchange=None):
         self.host = host
+        self.vhost = vhost
+        self.credentials = pika.PlainCredentials(username, password)
         self.exchange = exchange
 
     def connect(self):
@@ -34,7 +39,10 @@ class mq_util(object):
         while True:
             try:
                 self.connection = pika.BlockingConnection(
-                    pika.ConnectionParameters(self.host) )
+                    pika.ConnectionParameters(host=self.host,
+                        virtual_host=self.vhost,
+                        credentials=self.credentials)
+                )
                 break
             except (sockerr, pika.exceptions.AMQPConnectionError):
                 log.warn('[RabbitMQ] Failed connection'

@@ -26,15 +26,19 @@ LOGFILE = os.path.join(BASE_DIR, 'hgpusher.log')
 LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
-MQ = mq_utils.mq_util()
-
-config = common.get_configuration(os.path.join(BASE_DIR, 'config.ini'))
-BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
+config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini'),
+                                   os.path.join(BASE_DIR, 'secrets.ini')])
+bz = bz_utils.bz_util(api_url=config['bz_api_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
 LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
         config['ldap_branch_api'],
         config['ldap_bind_dn'], config['ldap_password'])
+MQ = mq_utils.mq_util(host=config['mq_host'],
+                      vhost=config['mq_vhost'],
+                      username=config['mq_username'],
+                      password=config['mq_password'],
+                      exchange=config['mq_exchange'])
 
 ##
 # Pre-compile some oft-used regexes
@@ -592,8 +596,6 @@ def main():
     LOGHANDLER.setFormatter(LOGFORMAT)
     log.addHandler(LOGHANDLER)
 
-    MQ.set_host(config['mq_host'])
-    MQ.set_exchange(config['mq_exchange'])
     MQ.connect()
     MQ.declare_and_bind(config['mq_hgp_queue'], 'hgpusher')
 
