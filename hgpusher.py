@@ -317,8 +317,8 @@ class Patchset(object):
                 patch.fill_user()
             # 3. patch applies using 'qimport; qpush'
             (patch_success, err) = import_patch(self.active_repo,
-                    patch.file, self.try_run, user=patch.user,
-                    try_syntax=self.try_syntax, bug_id=self.bug_id)
+                    patch.file, self.try_run, self.bug_id, self.branch,
+                    user=patch.user, try_syntax=self.try_syntax)
             if not patch_success:
                 log.error('[Patch %s] could not verify import:\n%s'
                         % (patch.num, err))
@@ -409,14 +409,15 @@ def in_ldap_group(email, group):
 
 def has_sufficient_permissions(user_email, branch):
     """
-    Searches LDAP to see if if the flagging user has sufficient LDAP perms.
+    Searches LDAP to see if the user kicking off the autoland process
+    has sufficient LDAP perms.
     """
     group = LDAP.get_branch_permissions(branch)
     if group == None:
         return False
     return common.in_ldap_group(LDAP, user_email, group)
 
-def import_patch(repo, patch, try_run, bug_id, user=None,
+def import_patch(repo, patch, try_run, bug_id, branch, user=None,
         try_syntax=config['hg_try_syntax']):
     """
     Import patch file patch into a mercurial queue.
@@ -424,7 +425,7 @@ def import_patch(repo, patch, try_run, bug_id, user=None,
     Import is used to pull required header information, and to
     automatically perform a commit for each patch
     """
-    cmd = ['qimport', '-R', repo, patch]
+    cmd = ['qimport', '-R', repo, patch.file]
     (output, err, ret) = run_hg(cmd)
     if ret != 0:
         return (ret == 0, err)
@@ -434,12 +435,60 @@ def import_patch(repo, patch, try_run, bug_id, user=None,
         return (ret == 0, err)
 
     cmd = ['qrefresh', '-R', repo]
-    # if a user field specified, qrefesh that name in there
+    # if a user field specified, which may only be on a Try run,
+    # qrefesh that name in there
     if user:
         cmd.extend(['-u', user])
+    # if it is not a try run, handle the addition of a=... r=... (al=... b=...)
+    if not try_run:
+        c_msg = generate_commit_message(repo, bug_id, patch)
+        if not c_msg: return (0, "Couldn't generate commit message")
+        cmd.extend(['-m', c_msg])
 
     (output, err, ret) = run_hg(cmd)
     return (ret == 0, err)
+
+def get_approval_for_branch(patch, branch):
+    """
+    Returns the approval dict that corresponds to the given branch.
+    """
+    ret = None
+    for app in patch.get('approvals', []):
+        if app['type'].strip() != branch:
+            continue
+        if app['result'].strip() != '+':
+            continue
+        ret = app
+        break
+    return ret
+
+def generate_commit_message(repo, user, bug_id, patch, branch):
+    """
+    Handle the addition of a=... r=... (al=... b=...)
+    """
+    # XXX: Is there some way this wouldn't need to be hard coded?
+    r_types = { 'review' : 'r',
+                'superreview' : 'sr',
+                'ui-review' : 'ui-r' }
+    # get the commit message
+    (output, err, ret) = run_hg(['qheader', '-R', repo])
+    if (ret != 0):
+        # fail
+        return None
+    output = output.strip()
+    if not re.search('\s+r=[^\s]+', output):
+        # If we are landing to branch, we know that there are no r-
+        for rev in patch['reviews']:
+            r_types[rev['type']]
+            rev['reviewer']['email']
+            output += ' %s=%s' \
+                    % (r_types[rev['type']], rev['reviewer']['email'])
+    if not re.search('\s+a=[^\s]+', output):
+        app = get_approval_for_branch(patch, branch)
+        if not app: return None
+        output += ' a=%s' % (app['approver']['email'])
+    output += ' (al=%s b=%s)' % (user, bug_id)
+    return output
 
 @retriable(retry_exceptions=(RetryException,), attempts=3, sleeptime=5)
 def clone_branch(branch, branch_url):
