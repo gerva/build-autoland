@@ -2,6 +2,7 @@ import site
 site.addsitedir('vendor')
 site.addsitedir('vendor/lib/python')
 
+import re
 import time
 import os, sys
 import logging
@@ -22,15 +23,19 @@ LOGFILE = os.path.join(base_dir, 'autoland_queue.log')
 LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
-config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
+config = common.get_configuration([os.path.join(base_dir, 'config.ini')])
 BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
-        attachment_url=config['bz_attachment_url'],
-        username=config['bz_username'], password=config['bz_password'],
-        jsonrpc_url=config['bz_jsonrpc_url'],
-        jsonrpc_login=config['bz_jsonrpc_login'],
-        jsonrpc_password=config['bz_jsonrpc_password'])
-LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
-        config['ldap_bind_dn'], config['ldap_password'])
+                      attachment_url=config['bz_attachment_url'],
+                      username=config['bz_username'],
+                      password=config['bz_password'],
+                      jsonrpc_url=config['bz_jsonrpc_url'],
+                      jsonrpc_login=config['bz_jsonrpc_login'],
+                      jsonrpc_password=config['bz_jsonrpc_password'])
+LDAP = ldap_utils.ldap_util(config['ldap_host'],
+                            int(config['ldap_port']),
+                            config['ldap_bind_dn'],
+                            config['ldap_password'],
+                            config['ldap_branch_api'])
 DB = DBHandler(config['databases_autoland_db_url'])
 MQ = mq_utils.mq_util(host=config['mq_host'],
                       vhost=config['mq_vhost'],
@@ -57,7 +62,7 @@ def get_reviews(attachment):
             if flag.get('name') == review_type:
                 reviews.append({
                         'type':review_type,
-                        'reviewer':bz.get_user_info(flag['setter']['name']),
+                        'reviewer':BZ.get_user_info(flag['setter']['name']),
                         'result':flag['status']
                         })
                 break
@@ -83,7 +88,7 @@ def get_approvals(attachment):
         if app_re.match(flag.get('name')):
             approvals.append({
                     'type': app_re.sub('', flag.get('name')),
-                    'approver':bz.get_user_info(flag['setter']['name']),
+                    'approver':BZ.get_user_info(flag['setter']['name']),
                     'result':flag['status']
                     })
     return approvals
@@ -262,7 +267,7 @@ def get_patchset(bug_id, user_patches=None):
                 # not a valid patch to be pulled
                 continue
             patch = { 'id' : attachment['id'],
-                      'author' : bz.get_user_info(
+                      'author' : BZ.get_user_info(
                           attachment['attacher']['name']),
                       'approvals' : get_reviews(attachment),
                       'reviews' : get_approvals(attachment) }
@@ -340,7 +345,7 @@ def bz_search_handler():
             continue
 
         patch_set.author = patch_group[0]['who']
-        ps.patches = ','.join(str(x['id']) for x in patches)
+        patch_set.patches = ','.join(str(x['id']) for x in patches)
 
         # get the branches
         comment = []
@@ -453,7 +458,7 @@ def bz_search_handler():
                                                'attach_id':patch})
         post_comment('\n\t'.join(comment), bug_id)
 
-@mq_utils.generate_callback
+@mq_utils.mq_util.generate_callback
 def message_handler(message):
     """
     Handles json messages received. Expected structures are as follows:
@@ -548,13 +553,13 @@ def message_handler(message):
             patch_set = patch_set[0]
             # is this the try run before push to branch?
             if patch_set.try_run and \
-                    msg['action'] == 'TRY.RUN' and ps.branch != 'try':
+                    msg['action'] == 'TRY.RUN' and patch_set.branch != 'try':
                 # remove try_run, when it comes up in the queue
                 # it will trigger push to branch(es)
                 patch_set.try_run = 0
                 patch_set.push_time = None
                 log.debug('Flag patchset %s revision %s for push to branch.'
-                        % (ps.id, ps.revision))
+                        % (patch_set.id, patch_set.revision))
                 db.PatchSetUpdate(ps)
             else:
                 # close it!
@@ -759,7 +764,7 @@ def handle_patchset(patchset):
 
     message = { 'job_type':'patchset', 'bug_id':patchset.bug_id,
             'branch_url':branch.repo_url,
-            'push_url':push_url,
+            'push_url':push_url, 'user':patchset.author,
             'branch':patchset.branch, 'try_run':patchset.try_run,
             'try_syntax':patchset.try_syntax,
             'patchsetid':patchset.id, 'patches':patches }
@@ -815,8 +820,8 @@ def post_comment(comment, bug_id):
         DB.CommentInsert(cmnt)
 
 def main():
-    mq.connect()
-    mq.declare_and_bind(config['mq_autoland_queue'], 'db')
+    MQ.connect()
+    MQ.declare_and_bind(config['mq_autoland_queue'], 'db')
 
     log.setLevel(logging.INFO)
     LOGHANDLER.setFormatter(LOGFORMAT)

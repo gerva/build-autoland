@@ -360,7 +360,7 @@ class DBHandler(object):
         next = connection.execute(next_q).fetchone()
         if not next:
             return None
-        return PatchSet(id=next[0], bug_id=next[1], patches=str(next[2]),
+        return PatchSet(ps_id=next[0], bug_id=next[1], patches=str(next[2]),
                 author=next[3], retries=next[4], branch=next[5],
                 try_run=next[6], try_syntax=next[7])
 
@@ -420,14 +420,15 @@ class DBHandler(object):
         tmp = connection.execute(q).fetchall()
         result = []
         for t in tmp:
-            result.append(Comment(id=t[0], comment=t[1], bug=t[2],
+            result.append(Comment(comment_id=t[0], comment=t[1], bug=t[2],
                 attempts=t[3], insertion_time=t[4]))
         return result
 
 
 class Branch(object):
     def __init__(self, branch_id=False, name=False, repo_url=False,
-            threshold=False, status=False):
+            threshold=False, status=False, push_to_closed=False,
+            approval_required=False):
         self.id = branch_id
         self.name = str(name) if name else name
         self.repo_url = str(repo_url) if repo_url else repo_url
@@ -465,8 +466,8 @@ class Branch(object):
 class PatchSet(object):
     def __init__(self, ps_id=False, bug_id=False, patches=False,
             revision=False, branch=False, try_run=False,
-            try_syntax=None, creation_time=False, push_time=False,
-            completion_time=False, author=False, retries=False):
+            try_syntax=None, creation_time=None, push_time=None,
+            completion_time=None, author=None, retries=None):
         self.id = ps_id
         self.bug_id = bug_id
         # Patches needs to be a string so that sqlalchemy can insert it
@@ -504,7 +505,7 @@ class PatchSet(object):
         d = {}
         d['id'] = self.id
         d['bug_id'] = self.bug_id
-        d['patches'] = ','.join(self.patchList())
+        d['patches'] = ','.join([str(x) for x in self.patchList()])
         d['revision'] = self.revision
         d['branch'] = self.branch
         d['try_run'] = self.try_run

@@ -24,8 +24,11 @@ class mq_util(object):
         self.last_message = None
 
         self.host = host
-        self.vhost = vhost
-        self.credentials = pika.PlainCredentials(username, password)
+        self.vhost = vhost if not None else None
+        if username and password:
+            self.credentials = pika.PlainCredentials(username, password)
+        else:
+            self.credentials = None
         self.exchange = exchange
 
     def connect(self):
