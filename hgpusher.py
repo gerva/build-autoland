@@ -124,7 +124,7 @@ class Patch(object):
         or None on failure.
         """
         log.debug("Getting patch %s" % (self.num))
-        self.file = BZ.get_patch(self.num, 'patches', create_path=True)
+        self.file = bz.get_patch(self.num, 'patches', create_path=True)
         return self.file
 
     def fill_user(self):
@@ -317,7 +317,7 @@ class Patchset(object):
                 patch.fill_user()
             # 3. patch applies using 'qimport; qpush'
             (patch_success, err) = import_patch(self.active_repo,
-                    patch.file, self.try_run, self.bug_id, self.branch,
+                    patch, self.try_run, self.bug_id, self.branch,
                     user=patch.user, try_syntax=self.try_syntax)
             if not patch_success:
                 log.error('[Patch %s] could not verify import:\n%s'

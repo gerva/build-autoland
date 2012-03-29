@@ -440,22 +440,13 @@ def bz_search_handler():
 
         if not branches:
 # XXX: This will be changed to a 'clear' command
-            for patch in patch_set.patchList():
-                BZ.autoland_update_attachment({'status':'failed',
-                                                   'attach_id':patch})
             comment.insert(0, 'Autoland Failure:')
         elif branches and comment:
 # XXX: This will be changed to a 'clear' command
-            for patch in patch_set.patchList():
-                BZ.autoland_update_attachment({'status':'running',
-                                                   'attach_id':patch})
             comment.insert(0, 'Autoland Warning:\n'
                               '\tOnly landing on branch(es): %s'
                                % (' '.join(branches)))
 
-        for patch in patch_set.patchList():
-            BZ.autoland_update_attachment({'status':'running',
-                                               'attach_id':patch})
         post_comment('\n\t'.join(comment), bug_id)
 
 @mq_utils.mq_util.generate_callback
@@ -531,14 +522,22 @@ def message_handler(message):
     if msg['type'] == 'SUCCESS':
         if msg['action'] == 'TRY.PUSH':
             # Successful push, add corresponding revision to patchset
-            patch_set = DB.PatchSetQuery(PatchSet(id=msg['patchsetid']))
+            patch_set = DB.PatchSetQuery(PatchSet(ps_id=msg['patchsetid']))
             if patch_set == None:
                 log.error('No corresponding patch set found for %s'
                         % (msg['patchsetid']))
                 return
             patch_set = patch_set[0]
+            for patch in patch_set.patchList():
+                BZ.autoland_update_attachment(
+                        {   'action':'delete',
+                            'attach_id':patch   })
             log.debug('Got patchset back from DB: %s' % (patch_set))
             patch_set.revision = msg['revision']
+
+            BZ.autoland_update_attachment(
+                    {   'action':'delete',
+                        'attach_id':patch   })
             DB.PatchSetUpdate(patch_set)
             log.debug('Added revision %s to patchset %s'
                     % (patch_set.revision, patch_set.id))
@@ -563,19 +562,15 @@ def message_handler(message):
                 db.PatchSetUpdate(ps)
             else:
                 # close it!
-                for patch in patch_set.patchList:
-                    BZ.autoland_update_attachment({'status':'success',
-                                                   'attach_id':patch})
                 DB.PatchSetDelete(patch_set)
                 log.debug('Deleting patchset %s' % (patch_set.id))
                 return
 
         elif msg['action'] == 'BRANCH.PUSH':
             # Guaranteed patchset EOL
-            patch_set = DB.PatchSetQuery(PatchSet(id=msg['patchsetid']))[0]
-            for patch in patch_set.patchList:
-                BZ.autoland_update_attachment({'status':'success',
-                                               'attach_id':patch})
+            patch_set = DB.PatchSetQuery(PatchSet(ps_id=msg['patchsetid']))[0]
+            # XXX: If eventually able to land without try push, this may
+            #      need to update the extension.
             DB.PatchSetDelete(patch_set)
             log.debug('Successful push to branch of patchset %s.'
                     % (patch_set.id))
@@ -590,9 +585,6 @@ def message_handler(message):
             patch_set = patch_set[0]
         if patch_set:
             # remove it from the queue, timeout should have been comented
-            for patch in patch_set.patchList:
-                BZ.autoland_update_attachment({'status':'failure',
-                                               'attach_id':patch})
             DB.PatchSetDelete(patch_set)
             log.debug('Received time out on %s, deleting patchset %s'
                     % (msg['action'], patch_set.id))
@@ -606,22 +598,23 @@ def message_handler(message):
                 return
             patch_set = patch_set[0]
         elif msg['action'] == 'PATCHSET.APPLY':
-            patch_set = DB.PatchSetQuery(PatchSet(id=msg['patchsetid']))
+            patch_set = DB.PatchSetQuery(PatchSet(ps_id=msg['patchsetid']))
             if patch_set == None:
                 # likely an untracked patch set sent from schedulerdbpoller
-                log.error('No corresponding patchset found for revision %s'
-                        % msg['revision'])
+                log.error('No corresponding patchset found for patch set id %s'
+                        % msg['patchsetid'])
                 return
             patch_set = patch_set[0]
 
         if patch_set:
             # remove it from the queue, error should have been comented to bug
-            for patch in patch_set.patchList:
-                BZ.autoland_update_attachment({'status':'failure',
-                                               'attach_id':patch})
             DB.PatchSetDelete(patch_set)
             log.debug('Received error on %s, deleting patchset %s'
                     % (msg['action'], patch_set.id))
+            for patch in patch_set.patchList():
+                BZ.autoland_update_attachment(
+                        {   'action':'delete',
+                            'attach_id':patch   })
 
 def handle_patchset(patchset):
     """

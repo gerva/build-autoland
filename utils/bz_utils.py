@@ -265,7 +265,7 @@ class bz_util(object):
         params['Bugzilla_login'] = self.jsonrpc_login
         params['Bugzilla_password'] = self.jsonrpc_password
         post_body = json.dumps({
-                "method":"TryAutoLand.updateStatus",
+                "method":"TryAutoLand.update",
                 "version":1.1,
                 "params":params
             })
@@ -280,13 +280,13 @@ class bz_util(object):
                 try:
                     data = json.loads(data)
                 except ValueError:
-                    log.error('TryAutoLand.updateStatus() didn\'t '
+                    log.error('TryAutoLand.update() didn\'t '
                               'return a JSON structure')
                     print "retry #%d" % (i)
                     continue
 
                 if data.get('error'):
-                    log.error('TryAutoLand.updateStatus(): %s'
+                    log.error('TryAutoLand.update(): %s'
                             % (data['error']))
                     print "retry #%d" % (i)
                     continue
