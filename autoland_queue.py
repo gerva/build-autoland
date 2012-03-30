@@ -331,7 +331,7 @@ def bz_search_handler():
 
         patch_set = PatchSet()
         # all runs will get a try_run by default for now
-        patch_set.try_syntax = patch_group[0]['try_syntax']
+        patch_set.try_syntax = bug.get('try_syntax')
         patch_set.bug_id = bug_id
 
         # check patch reviews & permissions
