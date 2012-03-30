@@ -332,7 +332,7 @@ class Patchset(object):
         Perform an 'hg import' on each patch in the set.
         If this is a try run, use the patch.user field to commit.
         """
-        if try_run:
+        if self.try_run:
             # create a null commit with try syntax
             cmd = ['qnew', '-R', self.active_repo]
             if config.get('staging', False):
