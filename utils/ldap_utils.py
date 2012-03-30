@@ -15,7 +15,7 @@ from util.retry import retriable
 log = logging.getLogger(__name__)
 
 class ldap_util():
-    def __init__(self, host, port, branch_api, bind_dn='', password=''):
+    def __init__(self, host, port, branch_api='', bind_dn='', password=''):
         self.host = host
         self.port = port
         self.bind_dn = bind_dn

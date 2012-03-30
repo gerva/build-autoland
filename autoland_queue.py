@@ -33,9 +33,9 @@ BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
                       jsonrpc_password=config['bz_jsonrpc_password'])
 LDAP = ldap_utils.ldap_util(config['ldap_host'],
                             int(config['ldap_port']),
-                            config['ldap_bind_dn'],
-                            config['ldap_password'],
-                            config['ldap_branch_api'])
+                            branch_api=config['ldap_branch_api'],
+                            bind_dn=config['ldap_bind_dn'],
+                            password=config['ldap_password'])
 DB = DBHandler(config['databases_autoland_db_url'])
 MQ = mq_utils.mq_util(host=config['mq_host'],
                       vhost=config['mq_vhost'],
