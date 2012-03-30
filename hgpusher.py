@@ -441,7 +441,7 @@ def import_patch(repo, patch, try_run, bug_id, branch, user=None,
         cmd.extend(['-u', user])
     # if it is not a try run, handle the addition of a=... r=... (al=... b=...)
     if not try_run:
-        c_msg = generate_commit_message(repo, bug_id, patch)
+        c_msg = generate_commit_message(repo, user, bug_id, patch, branch)
         if not c_msg: return (0, "Couldn't generate commit message")
         cmd.extend(['-m', c_msg])
 
