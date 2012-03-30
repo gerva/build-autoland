@@ -530,13 +530,13 @@ def message_handler(message):
             patch_set = patch_set[0]
             for patch in patch_set.patchList():
                 BZ.autoland_update_attachment(
-                        {   'action':'delete',
+                        {   'action':'remove',
                             'attach_id':patch   })
             log.debug('Got patchset back from DB: %s' % (patch_set))
             patch_set.revision = msg['revision']
 
             BZ.autoland_update_attachment(
-                    {   'action':'delete',
+                    {   'action':'remove',
                         'attach_id':patch   })
             DB.PatchSetUpdate(patch_set)
             log.debug('Added revision %s to patchset %s'
@@ -613,7 +613,7 @@ def message_handler(message):
                     % (msg['action'], patch_set.id))
             for patch in patch_set.patchList():
                 BZ.autoland_update_attachment(
-                        {   'action':'delete',
+                        {   'action':'remove',
                             'attach_id':patch   })
 
 def handle_patchset(patchset):
@@ -766,6 +766,11 @@ def handle_patchset(patchset):
     MQ.send_message(message, routing_key='hgpusher')
     patchset.push_time = datetime.datetime.utcnow()
     DB.PatchSetUpdate(patchset)
+    for patch in patchset.patchList():
+        BZ.autoland_update_attachment(
+                {   'action':'status',
+                    'status':'running',
+                    'attach_id':patch   })
 
 def handle_comments():
     """
