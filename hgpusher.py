@@ -479,7 +479,7 @@ def generate_commit_message(repo, user, bug_id, patch, branch):
     output = output.strip()
     if not re.search('\s+r=[^\s]+', output):
         # If we are landing to branch, we know that there are no r-
-        for rev in patch['reviews']:
+        for rev in patch.reviews:
             r_types[rev['type']]
             rev['reviewer']['email']
             output += ' %s=%s' \
