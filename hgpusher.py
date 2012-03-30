@@ -2,6 +2,7 @@ import site
 site.addsitedir('vendor')
 site.addsitedir('vendor/lib/python')
 
+import traceback
 import os, sys
 import re
 import subprocess
@@ -692,7 +693,8 @@ def main():
                     log.debug('Released working directory')
                     raise
     except Exception, err:
-        log.error('An error occurred: %s' % (err))
+        log.error('An error occurred: %s\n%s'
+                % (err, traceback.print_exc()))
         exit(1)
 
 if __name__ == '__main__':
