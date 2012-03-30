@@ -316,7 +316,6 @@ class DBHandler(object):
             '''
             SELECT DISTINCT patch_sets.id,bug_id,patches,author,
                             retries,patch_sets.branch,try_run,try_syntax,
-                            creation_time,
             FROM patch_sets
             JOIN
             (
@@ -365,8 +364,7 @@ class DBHandler(object):
         return PatchSet(ps_id=next_ps[0], bug_id=next_ps[1],
                 patches=str(next_ps[2]), author=next_ps[3],
                 retries=next_ps[4], branch=next_ps[5],
-                try_run=next_ps[6], try_syntax=next_ps[7],
-                creation_time=next_ps[8])
+                try_run=next_ps[6], try_syntax=next_ps[7])
 
     def PatchSetGetRevs(self):
         """
@@ -483,9 +481,12 @@ class PatchSet(object):
         self.branch = branch
         self.try_run = try_run
         self.try_syntax = try_syntax
-        self.creation_time = creation_time
-        self.push_time = push_time
-        self.completion_time = completion_time
+        if creation_time:
+            self.creation_time = creation_time
+        if push_time:
+            self.push_time = push_time
+        if completion_time:
+            self.completion_time = completion_time
         self.retries = retries
         self.author = author
 
