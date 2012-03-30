@@ -567,7 +567,7 @@ def message_handler(message):
                 patch_set.push_time = None
                 log.debug('Flag patchset %s revision %s for push to branch.'
                         % (patch_set.id, patch_set.revision))
-                db.PatchSetUpdate(ps)
+                DB.PatchSetUpdate(patch_set)
             else:
                 # close it!
                 DB.PatchSetDelete(patch_set)
