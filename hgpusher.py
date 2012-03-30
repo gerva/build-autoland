@@ -490,7 +490,7 @@ def generate_commit_message(repo, user, bug_id, patch, branch):
         # if not app: return None
         if app:
             output += ' a=%s' % (app['approver']['email'])
-    output += ' (al=%s b=%s)' % (user, bug_id)
+    output += ' (al=%s; Bug %s)' % (user, bug_id)
     return output
 
 @retriable(retry_exceptions=(RetryException,), attempts=3, sleeptime=5)
