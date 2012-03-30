@@ -319,7 +319,8 @@ class Patchset(object):
             # 3. patch applies using 'qimport; qpush'
             (patch_success, err) = import_patch(self.active_repo,
                     patch, self.try_run, self.bug_id, self.branch,
-                    user=patch.user, try_syntax=self.try_syntax)
+                    user=patch.user, try_syntax=self.try_syntax,
+                    landing_user=self.user)
             if not patch_success:
                 log.error('[Patch %s] could not verify import:\n%s'
                         % (patch.num, err))
@@ -419,7 +420,7 @@ def has_sufficient_permissions(user_email, branch):
     return common.in_ldap_group(LDAP, user_email, group)
 
 def import_patch(repo, patch, try_run, bug_id, branch, user=None,
-        try_syntax=config['hg_try_syntax']):
+        try_syntax=config['hg_try_syntax'], landing_user=None):
     """
     Import patch file patch into a mercurial queue.
 
@@ -436,13 +437,13 @@ def import_patch(repo, patch, try_run, bug_id, branch, user=None,
         return (ret == 0, err)
 
     cmd = ['qrefresh', '-R', repo]
-    # if a user field specified, which may only be on a Try run,
-    # qrefesh that name in there
-    if user:
+    # This will only ever be specified on a try run, but just make sure
+    if try_run and user:
         cmd.extend(['-u', user])
     # if it is not a try run, handle the addition of a=... r=... (al=... b=...)
     if not try_run:
-        c_msg = generate_commit_message(repo, user, bug_id, patch, branch)
+        c_msg = generate_commit_message(repo, landing_user,
+                                        bug_id, patch, branch)
         if not c_msg: return (0, "Couldn't generate commit message")
         cmd.extend(['-m', c_msg])
 
@@ -486,8 +487,9 @@ def generate_commit_message(repo, user, bug_id, patch, branch):
                     % (r_types[rev['type']], rev['reviewer']['email'])
     if not re.search('\s+a=[^\s]+', output):
         app = get_approval_for_branch(patch, branch)
-        if not app: return None
-        output += ' a=%s' % (app['approver']['email'])
+        # if not app: return None
+        if app:
+            output += ' a=%s' % (app['approver']['email'])
     output += ' (al=%s b=%s)' % (user, bug_id)
     return output
 
