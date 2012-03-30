@@ -515,9 +515,12 @@ class PatchSet(object):
         d['branch'] = self.branch
         d['try_run'] = self.try_run
         d['try_syntax'] = self.try_syntax
-        d['creation_time'] = self.creation_time
-        d['push_time'] = self.push_time
-        d['completion_time'] = self.completion_time
+        if self.creation_time:
+            d['creation_time'] = self.creation_time
+        if self.push_time:
+            d['push_time'] = self.push_time
+        if self.completion_time:
+            d['completion_time'] = self.completion_time
         d['retries'] = self.retries
         d['author'] = self.author
         return d
