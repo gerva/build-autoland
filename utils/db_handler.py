@@ -315,7 +315,7 @@ class DBHandler(object):
         next_q = \
             '''
             SELECT DISTINCT patch_sets.id,bug_id,patches,author,
-                            retries,patch_sets.branch,try_run,try_syntax,
+                            retries,patch_sets.branch,try_run,try_syntax
             FROM patch_sets
             JOIN
             (
