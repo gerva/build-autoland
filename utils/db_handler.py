@@ -314,8 +314,7 @@ class DBHandler(object):
             raise Exception("Bad Patchset Query")
         next_q = \
             '''
-            SELECT DISTINCT patch_sets.id,bug_id,patches,author,
-                            retries,patch_sets.branch,try_run,try_syntax
+            SELECT DISTINCT patch_sets.*
             FROM patch_sets
             JOIN
             (
@@ -361,9 +360,7 @@ class DBHandler(object):
         next = connection.execute(next_q).fetchone()
         if not next:
             return None
-        return PatchSet(ps_id=next[0], bug_id=next[1], patches=str(next[2]),
-                author=next[3], retries=next[4], branch=next[5],
-                try_run=next[6], try_syntax=next[7])
+        return PatchSet(*next)
 
     def PatchSetGetRevs(self):
         """
