@@ -114,12 +114,13 @@ class ldap_util():
         result = urllib2.urlopen(req)
         perms = result.read()
         perms = perms.rstrip()
-        if 'is not an hg repository' in perms or \
-                'Need a repository' in perms or \
-                'A problem occurred' in perms:
+        if 'is not an hg repository' in perms:
+            return None
+        if 'Need a repository' in perms or \
+               'A problem occurred' in perms:
             log.error('An error has occurred with branch permissions api:\n'
                       '\turl: %s\n\tresponse: %s' % (url, perms))
-            return None
+            raise Exception
         log.info('Required permissions for %s: %s' % (branch, perms))
         return perms
 
