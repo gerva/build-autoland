@@ -298,7 +298,11 @@ def bz_search_handler():
         bug_id = bug.get('bug_id')
 
         # Grab the branches as a list, do a bit of cleaning
-        branches = bug.get('branches', 'try').split(',')
+        branches = bug.get('branches', 'try')
+        if not branches:
+            log.info("Bug %s doesn't have any branches listed" % bug_id)
+            continue
+        branches = branches.split(',')
         branches = [x.strip() for x in branches]
         branches = [y for y in branches if y != '']
         branches.sort()
