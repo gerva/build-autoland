@@ -262,7 +262,7 @@ class DBHandler(object):
         rows = q_results.fetchall()
         if rows:
             ps = map(lambda x: PatchSet(
-                id=x[0],bug_id=x[1],patches=x[2],author=x[3],retries=x[4],
+                ps_id=x[0],bug_id=x[1],patches=x[2],author=x[3],retries=x[4],
                 revision=x[5],branch=x[6],try_run=x[7],try_syntax=x[8],
                 creation_time=x[9],push_time=x[10],completion_time=x[11]),
                 rows)
@@ -279,6 +279,7 @@ class DBHandler(object):
         connection = self.engine.connect()
         if patch_set.id != None:
             patch_set.id = None
+        patch_set.creation_time = datetime.datetime.now()
         q = r.insert(patch_set)
         result = connection.execute(q)
         return result.inserted_primary_key[0]
