@@ -279,7 +279,7 @@ class DBHandler(object):
         connection = self.engine.connect()
         if patch_set.id != None:
             patch_set.id = None
-        patch_set.creation_time = datetime.datetime.now()
+        patch_set.creation_time = datetime.datetime.utcnow()
         q = r.insert(patch_set)
         result = connection.execute(q)
         return result.inserted_primary_key[0]

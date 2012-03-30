@@ -762,15 +762,15 @@ def handle_patchset(patchset):
             'try_syntax':patchset.try_syntax,
             'patchsetid':patchset.id, 'patches':patches }
 
-    log.info("Sending job to hgpusher: %s" % (message))
-    MQ.send_message(message, routing_key='hgpusher')
-    patchset.push_time = datetime.datetime.utcnow()
-    DB.PatchSetUpdate(patchset)
     for patch in patchset.patchList():
         BZ.autoland_update_attachment(
                 {   'action':'status',
                     'status':'running',
                     'attach_id':patch   })
+    patchset.push_time = datetime.datetime.utcnow()
+    DB.PatchSetUpdate(patchset)
+    log.info("Sending job to hgpusher: %s" % (message))
+    MQ.send_message(message, routing_key='hgpusher')
 
 def handle_comments():
     """
