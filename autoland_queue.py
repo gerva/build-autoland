@@ -444,6 +444,10 @@ def bz_search_handler():
 
         if not branches:
 # XXX: This will be changed to a 'clear' command
+            for patch in patch_set.patchList():
+                BZ.autoland_update_attachment(
+                        {   'action':'remove',
+                            'attach_id':patch   })
             comment.insert(0, 'Autoland Failure:')
         elif branches and comment:
 # XXX: This will be changed to a 'clear' command

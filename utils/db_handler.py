@@ -241,17 +241,17 @@ class DBHandler(object):
         q = r.select()
         if patch_set.id != False:
             q = q.where(r.c.id.like(patch_set.id))
-        if patch_set.bug_id != False:
+        if patch_set.bug_id:
             q = q.where(r.c.bug_id.like(patch_set.bug_id))
-        if patch_set.author != False:
+        if patch_set.author:
             q = q.where(r.c.author.like(patch_set.author))
-        if patch_set.patches != False:
+        if patch_set.patches:
             q = q.where(r.c.patches.like(patch_set.patches))
-        if patch_set.revision != False:
+        if patch_set.revision:
             q = q.where(r.c.revision.like(patch_set.revision))
-        if patch_set.branch != False:
+        if patch_set.branch:
             q = q.where(r.c.branch.like(patch_set.branch))
-        if patch_set.try_syntax != None:
+        if patch_set.try_syntax:
             q = q.where(r.c.try_syntax.like(patch_set.try_syntax))
         if not isinstance(patch_set.retries, bool):
             q = q.where(r.c.retries == patch_set.retries)

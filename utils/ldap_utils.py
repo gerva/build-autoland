@@ -42,6 +42,7 @@ class ldap_util():
         Note that failures will be common, since connection closes at a certain
         point of inactivity, and needs to be re-established. Expect 2 attempts.
         """
+        result = None
         for i in range(5):
             try:
                 self._bind()
