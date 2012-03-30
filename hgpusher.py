@@ -114,8 +114,8 @@ class Patch(object):
         self.num = patch['id']
         self.author_name = patch['author']['name']
         self.author_email = patch['author']['email']
-        self.reviews = patch.get('reviews')
-        self.approvals = patch.get('approvals')
+        self.reviews = patch.get('reviews', [])
+        self.approvals = patch.get('approvals', [])
         self.file = None
         self.user = None
 
@@ -454,7 +454,7 @@ def get_approval_for_branch(patch, branch):
     Returns the approval dict that corresponds to the given branch.
     """
     ret = None
-    for app in patch.get('approvals', []):
+    for app in patch.approvals:
         if app['type'].strip() != branch:
             continue
         if app['result'].strip() != '+':
