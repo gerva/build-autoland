@@ -112,7 +112,7 @@ class TestAutolandDbHandler(unittest.TestCase):
         self.db.PatchSetDelete(ps2)
         self.db.PatchSetDelete(ps3)
         # Add tests for querying on other params than just branch
-        
+
     def testPatchSetGetNext(self):
         ps1 = PatchSet(bug_id=12577, patches='534442', branch='try',
             try_run=1, author='lsblakk@mozilla.com', retries=None, try_syntax=None)
