@@ -286,6 +286,7 @@ class bz_util(object):
                     continue
 
                 if data.get('error'):
+                    print data['error']
                     log.error('TryAutoLand.update(): %s'
                             % (data['error']))
                     print "retry #%d" % (i)
