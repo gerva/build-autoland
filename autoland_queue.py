@@ -456,8 +456,8 @@ def bz_search_handler():
             comment.insert(0, 'Autoland Warning:\n'
                               '\tOnly landing on branch(es): %s'
                                % (' '.join(branches)))
-
-        post_comment('\n\t'.join(comment), bug_id)
+        if comment:
+            post_comment('\n\t'.join(comment), bug_id)
 
 @mq_utils.mq_util.generate_callback
 def message_handler(message):
