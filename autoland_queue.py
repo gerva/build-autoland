@@ -175,8 +175,10 @@ def get_review_status(patches, perms):
                     log.info("PERMISSIONS: Reviewer %s has valid %s "
                              "permissions" % (rev['reviewer']['email'], perms))
                     reviewed = True
-                else:
-                    if p_id not in invalid: invalid.append(str(p_id))
+                elif p_id not in invalid:
+                    log.info("PERMISSIONS ERROR: Reviewer %s has invalid %s "
+                             "permissions" % (rev['reviewer']['email'], perms))
+                    invalid.append(str(p_id))
             elif rev['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
             else:
@@ -693,21 +695,21 @@ def handle_patchset(patchset):
         if r_status[0] == 'FAIL':
             log.info('Failed review on patches %s' % (','.join(r_status[1])))
             post_comment('Autoland Failure:\n%sFailed review on patch(es): %s'
-                            % (' '.join(r_status[1])))
+                            % (' '.join(r_status[1])), patchset.bug_id)
             return
         elif r_status[0] == 'PENDING':
             log.info('Missing required review for patches %s'
                         % (','.join(r_status[1])))
             post_comment('Autoland Failure:\n'
                          'Missing required review for patch(es): %s'
-                            % (' '.join(r_status[1])))
+                            % (' '.join(r_status[1])), patchset.bug_id)
             return
         elif r_status[0] == 'INVALID':
             log.info('Invalid review permissions on patches %s'
                     % (','.join(r_status[1])))
             post_comment('Autoland Failure:\n'
                          'Invalid review for patch(es): %s'
-                            % (' '.join(r_status[1])))
+                            % (' '.join(r_status[1])), patchset.bug_id)
             return
     if branch.approval_required:
         a_status = get_approval_status(patches, patchset.branch, branch_perms)
@@ -716,7 +718,8 @@ def handle_patchset(patchset):
                     % (','.join(r_status[1]), patchset.branch))
             post_comment('Autoland Failure:\n'
                         'Failed approval for branch %s on patch(es): %s'
-                            % (patchset.branch, ' '.join(a_status[1])))
+                            % (patchset.branch, ' '.join(a_status[1])),
+                               patchset.bug_id)
             return
         elif a_status[0] == 'PENDING':
             log.info('Require approval on patches %s for branch %s'
@@ -724,14 +727,15 @@ def handle_patchset(patchset):
             post_comment('Autoland Failure:\n'
                          'Missing required approval for branch %s '
                          'on patch(es): %s'
-                         % (patchset.branch, ' '.join(a_status[1])))
+                         % (patchset.branch, ' '.join(a_status[1])),
+                            patchset.bug_id)
             return
         elif r_status[0] == 'INVALID':
             log.info('Invalid approval permissions on patches %s'
                     % (','.join(r_status[1])))
             post_comment('Autoland Failure:\n'
                          'Invalid approval for patch(es): %s'
-                            % (' '.join(a_status[1])))
+                            % (' '.join(a_status[1])), patchset.bug_id)
             return
 
     if patchset.try_run:
