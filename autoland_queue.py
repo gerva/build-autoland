@@ -692,50 +692,44 @@ def handle_patchset(patchset):
     # double check if this job should be run
     if patchset.branch.lower() != 'try':
         r_status = get_review_status(patches, branch_perms)
-        if r_status[0] == 'FAIL':
-            log.info('Failed review on patches %s' % (','.join(r_status[1])))
-            post_comment('Autoland Failure:\n%sFailed review on patch(es): %s'
-                            % (' '.join(r_status[1])), patchset.bug_id)
-            return
-        elif r_status[0] == 'PENDING':
-            log.info('Missing required review for patches %s'
-                        % (','.join(r_status[1])))
-            post_comment('Autoland Failure:\n'
-                         'Missing required review for patch(es): %s'
-                            % (' '.join(r_status[1])), patchset.bug_id)
-            return
-        elif r_status[0] == 'INVALID':
-            log.info('Invalid review permissions on patches %s'
-                    % (','.join(r_status[1])))
-            post_comment('Autoland Failure:\n'
-                         'Invalid review for patch(es): %s'
-                            % (' '.join(r_status[1])), patchset.bug_id)
+        if r_status[0] != 'PASS':
+            log.info('%s review on patches %s'
+                        % (r_status[0], ','.join(r_status[1])))
+            if r_status[0] == 'FAIL':
+                comment = 'Autoland Failure:\n' \
+                          '%sFailed review on patch(es): %s' \
+                                % (' '.join(r_status[1]))
+            elif r_status[0] == 'PENDING':
+                comment = 'Autoland Failure:\n' \
+                          'Missing required review for patch(es): %s' \
+                                % (' '.join(r_status[1]))
+            elif r_status[0] == 'INVALID':
+                comment = 'Autoland Failure:\n' \
+                          'Invalid review for patch(es): %s' \
+                                % (' '.join(r_status[1]))
+            DB.PatchSetDelete(patchset)
+            post_comment(comment, patchset.bug_id)
             return
     if branch.approval_required:
         a_status = get_approval_status(patches, patchset.branch, branch_perms)
-        if a_status[0] == 'FAIL':
-            log.info('Failed approval on patches %s for branch %s'
-                    % (','.join(r_status[1]), patchset.branch))
-            post_comment('Autoland Failure:\n'
-                        'Failed approval for branch %s on patch(es): %s'
-                            % (patchset.branch, ' '.join(a_status[1])),
-                               patchset.bug_id)
-            return
-        elif a_status[0] == 'PENDING':
-            log.info('Require approval on patches %s for branch %s'
-                    % (','.join(r_status[1]), patchset.branch))
-            post_comment('Autoland Failure:\n'
-                         'Missing required approval for branch %s '
-                         'on patch(es): %s'
-                         % (patchset.branch, ' '.join(a_status[1])),
-                            patchset.bug_id)
-            return
-        elif r_status[0] == 'INVALID':
-            log.info('Invalid approval permissions on patches %s'
-                    % (','.join(r_status[1])))
-            post_comment('Autoland Failure:\n'
-                         'Invalid approval for patch(es): %s'
-                            % (' '.join(a_status[1])), patchset.bug_id)
+        if a_status[0] != 'PASS':
+            log.info('%s approval on patches %s for branch %s'
+                    % (r_status[0], ','.join(r_status[1]), patchset.branch))
+            if a_status[0] == 'FAIL':
+                comment = 'Autoland Failure:\n' \
+                          'Failed approval for branch %s on patch(es): %s' \
+                                % (patchset.branch, ' '.join(a_status[1]))
+            elif a_status[0] == 'PENDING':
+                comment = 'Autoland Failure:\n' \
+                          'Missing required approval for branch %s ' \
+                          'on patch(es): %s' \
+                                % (patchset.branch, ' '.join(a_status[1]))
+            elif r_status[0] == 'INVALID':
+                comment = 'Autoland Failure:\n' \
+                          'Invalid approval for patch(es): %s' \
+                                % (' '.join(a_status[1]))
+            DB.PatchSetDelete(patchset)
+            post_comment(comment, patchset.bug_id)
             return
 
     if patchset.try_run:
