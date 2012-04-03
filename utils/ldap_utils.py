@@ -20,11 +20,14 @@ class ldap_util():
         self.port = port
         self.bind_dn = bind_dn
         self.password = password
-        self.connection = self._connect()
+        self.connection = None
         self.branch_api = branch_api
 
+        self._connect()
+
     def _connect(self):
-        return ldap.initialize('ldap://%s:%s' % (self.host, self.port))
+        self.connection = ldap.initialize('ldap://%s:%s'
+                                % (self.host, self.port))
 
     def _bind(self):
         self.connection.simple_bind(self.bind_dn, self.password)
@@ -54,7 +57,7 @@ class ldap_util():
                 break
             except:
                 log.error("Connection to LDAP lost. Reconnect #%d" % (i))
-                self.connection = self._connect()
+                self._connect()
 
         return result
 
