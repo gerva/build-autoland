@@ -43,6 +43,7 @@ class ldap_util():
         point of inactivity, and needs to be re-established. Expect 2 attempts.
         """
         result = None
+        log.debug('Search for: %s; filter: %s' % (bind, filterstr))
         for i in range(5):
             try:
                 self._bind()
@@ -51,6 +52,7 @@ class ldap_util():
                 result = self.connection.result(timeout=10)
                 log.info('Success')
             except:
+                log.error("Connection to LDAP lost. Reconnect #%d" % (i))
                 self._connect()
 
         return result
