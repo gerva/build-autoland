@@ -28,9 +28,9 @@ BZ = bz_utils.bz_util(api_url=config['bz_api_url'],
                       attachment_url=config['bz_attachment_url'],
                       username=config['bz_username'],
                       password=config['bz_password'],
-                      jsonrpc_url=config['bz_jsonrpc_url'],
-                      jsonrpc_login=config['bz_jsonrpc_login'],
-                      jsonrpc_password=config['bz_jsonrpc_password'])
+                      webui_url=config['bz_webui_url'],
+                      webui_login=config['bz_webui_login'],
+                      webui_password=config['bz_webui_password'])
 LDAP = ldap_utils.ldap_util(config['ldap_host'],
                             int(config['ldap_port']),
                             branch_api=config['ldap_branch_api'],

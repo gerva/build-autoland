@@ -16,15 +16,15 @@ log = logging.getLogger(__name__)
 class bz_util(object):
     def __init__(self, api_url, attachment_url=None,
             username=None, password=None,
-            jsonrpc_url=None,   # Not all tools use this
-            jsonrpc_login=None, jsonrpc_password=None):
+            webui_url=None,   # Not all tools use this
+            webui_login=None, webui_password=None):
         self.api_url = api_url
         self.attachment_url = attachment_url
         self.username = username
         self.password = password
-        self.jsonrpc_url = jsonrpc_url
-        self.jsonrpc_login = jsonrpc_login
-        self.jsonrpc_password = jsonrpc_password
+        self.webui_url = webui_url
+        self.webui_login = webui_login
+        self.webui_password = webui_password
 
 # Catch these exceptions:
 # bug doesn't exist
@@ -238,9 +238,9 @@ class bz_util(object):
         """
         Polls the Bugzilla WebService API for any flagged autoland bugs.
         """
-        url = self.jsonrpc_url + "?method=TryAutoLand.getBugs"
-        url = url + "&Bugzilla_login=%s" % (self.jsonrpc_login)
-        url = url + "&Bugzilla_password=%s" % (self.jsonrpc_password)
+        url = self.webui_url + "?method=TryAutoLand.getBugs"
+        url = url + "&Bugzilla_login=%s" % (self.webui_login)
+        url = url + "&Bugzilla_password=%s" % (self.webui_password)
         req = urllib2.Request(url, None, {'Accept':'application/json',
                     'Content-Type':'application/json'})
         for i in range(retries):
@@ -262,14 +262,14 @@ class bz_util(object):
         """
         Posts the update to the Bugzilla WebService API.
         """
-        params['Bugzilla_login'] = self.jsonrpc_login
-        params['Bugzilla_password'] = self.jsonrpc_password
+        params['Bugzilla_login'] = self.webui_login
+        params['Bugzilla_password'] = self.webui_password
         post_body = json.dumps({
                 "method":"TryAutoLand.update",
                 "version":1.1,
                 "params":params
             })
-        url = self.jsonrpc_url
+        url = self.webui_url
         req = urllib2.Request(url, post_body, {'Accept':'application/json',
                     'Content-Type':'application/json'})
         req.get_method = lambda: "POST"
