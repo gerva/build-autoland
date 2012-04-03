@@ -51,6 +51,7 @@ class ldap_util():
                         filterstr=filterstr, attrlist=attrlist)
                 result = self.connection.result(timeout=10)
                 log.info('Success')
+                break
             except:
                 log.error("Connection to LDAP lost. Reconnect #%d" % (i))
                 self._connect()
