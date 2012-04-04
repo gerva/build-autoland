@@ -56,7 +56,7 @@ class ldap_util():
                 log.info('Success')
                 break
             except:
-                log.error("Connection to LDAP lost. Reconnect #%d" % (i))
+                log.warn("Connection to LDAP lost. Reconnect #%d" % (i))
                 self._connect()
 
         return result

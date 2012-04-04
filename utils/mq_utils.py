@@ -7,9 +7,9 @@ import sys
 from socket import error as sockerr
 import time
 try:
-    import json
-except ImportError:
     import simplejson as json
+except ImportError:
+    import json
 import logging
 import datetime
 
@@ -170,7 +170,7 @@ class mq_util(object):
         while True:
             try:
                 if not self.channel:
-                    log.warn(sys.stderr, 'Connection lost. Reconnecting to %s'
+                    log.warn('Connection lost. Reconnecting to %s'
                             % (self.host))
                     self.connect(block=block)
                 self.channel.basic_qos(prefetch_count=1)

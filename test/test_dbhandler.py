@@ -28,6 +28,8 @@ class TestAutolandDbHandler(unittest.TestCase):
         b_query = self.db.BranchQuery(Branch(id=b.id))  # Query
         print self.db.BranchQuery
         self.assertEqual(b.toDict(), b_query[0].toDict())
+        b_query = self.db.BranchQueryOne(Branch(branch_id=b.id))
+        self.assertEqual(b.toDict(), b_query.toDict())
         self.db.BranchDelete(b) # Delete
         b_query = self.db.BranchQuery(Branch(id=b.id))
         self.assertEqual(b_query, None)

@@ -81,6 +81,12 @@ class bz_util(object):
         # explicitly caught.
         raise Exception('PutError')
 
+    def get_bug(self, bug_id):
+        """
+        Get the bug data from the BzAPI.
+        """
+        return bz.request('bug/%s' % (bug_id))
+
     def get_patch(self, patch_id, path='.', create_path=False,
             overwrite_patch=False):
         """

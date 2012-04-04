@@ -3,9 +3,9 @@ site.addsitedir('vendor')
 site.addsitedir('vendor/lib/python')
 
 try:
-    import json
-except ImportError:
     import simplejson as json
+except ImportError:
+    import json
 import sys, os, traceback, urllib2, urllib, re
 from time import time, strftime, strptime, localtime, mktime, gmtime
 from argparse import ArgumentParser
@@ -60,15 +60,8 @@ class SchedulerDBPoller():
 
         # Set up Self-Serve API
         self.self_serve_api_url = self.config.get('self_serve', 'url')
-        if user:
-            self.user = user
-        else:
-            self.user = self.config.get('self_serve', 'user')
-
-        if password:
-            self.password = password
-        else:
-            self.password = self.config.get('self_serve', 'password')
+        self.user = self.config.get('self_serve', 'user')
+        self.password = self.config.get('self_serve', 'password')
 
         # Set up database handler
         self.scheduler_db = DBHandler(
@@ -91,8 +84,13 @@ class SchedulerDBPoller():
             except IOError, e:
                 log.error("Couldn't open cache file for rev: %s" % revision)
                 raise
-            first_entry = mktime(strptime(
-                    entries[0].split('|')[0], "%a, %d %b %Y %H:%M:%S %Z"))
+            try:
+                first_entry = mktime(strptime(
+                        entries[0].split('|')[0], "%a, %d %b %Y %H:%M:%S %Z"))
+            except OverflowError, ValueError:
+                log.error("Could not convert time %s to localtime"
+                            % (entries[0].split('|')[0]))
+                return False    # can't say it's timed out
             diff = now - first_entry
             if diff > timeout:
                 log.debug("Timeout on rev: %s " % revision)
@@ -135,8 +133,7 @@ class SchedulerDBPoller():
                 final_status = "FAILURE"
                 if self.verbose:
                     log.debug("Complete and a failure")
-        elif (results['total_builds'] - results['warnings']) \
-                == results['success'] \
+        elif results['total_builds'] - results['warnings'] == results['success'] \
                 and results['warnings'] <= (MAX_ORANGE * 2):
             # Get buildernames where result was warnings
             buildernames = {}
@@ -154,7 +151,7 @@ class SchedulerDBPoller():
             for name, info in buildernames.items():
                 # If we have more than one result for a builder name,
                 # compare the results
-                if len(info) == 2:
+                if len(info) > 1:
                     if self.verbose:
                         log.debug("WE HAVE A DUPE: %s" % name)
                     retry_count += 1
@@ -246,6 +243,7 @@ class SchedulerDBPoller():
             return author[0]
         elif author:
             log.error("More than one author for: %s" % br)
+        return None
 
     def GetBugNumbers(self, buildrequests):
         """
@@ -357,8 +355,6 @@ class SchedulerDBPoller():
                 % (cache_file, cache_file + '.done'))
         if os.path.exists(cache_file):
             os.rename(cache_file, cache_file + '.done')
-            if os.path.exists(cache_file):
-                os.remove(cache_file)
 
     def LoadCache(self):
         """
@@ -711,14 +707,6 @@ if __name__ == '__main__':
                         action="append",
                         help="config file to use for accessing db",
                         required=True)
-    parser.add_argument("-u", "--user",
-                        dest="user",
-                        help="username for buildapi ldap posting",
-                        required=True)
-    parser.add_argument("-p", "--password",
-                        dest="password",
-                        help="password for buildapi ldap posting",
-                        required=True)
     parser.add_argument("-r", "--revision",
                         dest="revision",
                         help="a specific revision to poll")
@@ -775,7 +763,6 @@ if __name__ == '__main__':
         if options.revision:
             poller = SchedulerDBPoller(branch=options.branch,
                     cache_dir=options.cache_dir, config=options.config,
-                    user=options.user, password=options.password,
                     dry_run=options.dry_run, verbose=options.verbose)
             result = poller.PollByRevision(options.revision, options.flag_check)
             if options.verbose:
@@ -801,7 +788,6 @@ if __name__ == '__main__':
                             branch=options.branch,
                             cache_dir=options.cache_dir,
                             configs=options.configs,
-                            user=options.user, password=options.password,
                             dry_run=options.dry_run, verbose=options.verbose,
                             messages=options.messages)
                 incomplete = poller.PollByTimeRange(options.starttime,
@@ -817,6 +803,4 @@ if __name__ == '__main__':
     finally:
         if lock_file:
             lock_file.release()
-
-    sys.exit(0)
 

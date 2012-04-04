@@ -4,6 +4,16 @@ import os
 
 HTTP_EXCEPTIONS = (urllib2.HTTPError, urllib2.URLError, httplib.BadStatusLine)
 
+TBPL_NAMES = {
+    'mozilla-central' : 'Firefox',
+    'try' : 'Try',
+    'mozilla-inbound' : 'Mozilla-Inbound',
+    'mozilla-aurora' : 'Mozilla-Aurora',
+    'mozilla-beta' : 'Mozilla-Beta',
+    'mozilla-release' : 'Mozilla-Release',
+    'mozilla-esr10' : 'Mozilla-Esr10',
+}
+
 def get_configuration(conf_files):
     # load configuration
     config = ConfigParser.ConfigParser()

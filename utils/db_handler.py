@@ -1,4 +1,5 @@
 import site
+import re
 site.addsitedir('vendor')
 site.addsitedir('vendor/lib/python')
 
@@ -149,7 +150,7 @@ class DBHandler(object):
 
         return build_requests
 
-    def BranchQuery(self, branch):
+    def BranchQuery(self, branch, limit=None):
         """
         Returns a list of Branch objects that match the set fields in branch.
         eg. BranchQuery(Branch(threshold=50, status='disabled'))
@@ -167,6 +168,8 @@ class DBHandler(object):
             q = q.where(r.c.threshold.like(branch.threshold))
         if branch.status:
             q = q.where(r.c.status.like(branch.status))
+        if limit:
+            q = q.limit(limit)
 
         connection = self.engine.connect()
         q_results = connection.execute(q)
@@ -174,6 +177,15 @@ class DBHandler(object):
         if rows:
             return map(lambda x: Branch(*x), rows)
         return None
+
+    def BranchQueryOne(self, branch):
+        """
+        A wrapper for BranchQuery that will return a single branch.
+        """
+        result = self.BranchQuery(branch, 1)
+        if result:
+            result = result[0]
+        return result
 
     def BranchRunningJobsQuery(self, branch, count_try=True):
         """
@@ -261,11 +273,12 @@ class DBHandler(object):
         q_results = connection.execute(q)
         rows = q_results.fetchall()
         if rows:
-            ps = map(lambda x: PatchSet(
-                ps_id=x[0],bug_id=x[1],patches=x[2],author=x[3],retries=x[4],
-                revision=x[5],branch=x[6],try_run=x[7],try_syntax=x[8],
-                creation_time=x[9],push_time=x[10],completion_time=x[11]),
-                rows)
+            ps = [PatchSet(
+                    ps_id=x[0], bug_id=x[1], patches=x[2], author=x[3],
+                    retries=x[4], revision=x[5], branch=x[6], try_run=x[7],
+                    try_syntax=x[8], creation_time=x[9], push_time=x[10],
+                    completion_time=x[11]),
+                for x in rows]
             print ps
             return ps
         return None
@@ -323,7 +336,7 @@ class DBHandler(object):
                 FROM branches
                 LEFT OUTER JOIN
                 (
-                    SELECT branch,count(*) as count
+                    SELECT branch,count(patch_sets.id) as count
                     FROM patch_sets
                     WHERE
                         NOT push_time IS NULL
@@ -432,10 +445,10 @@ class Branch(object):
             threshold=False, status=False, push_to_closed=False,
             approval_required=False):
         self.id = branch_id
-        self.name = str(name) if name else name
-        self.repo_url = str(repo_url) if repo_url else repo_url
+        self.name = name
+        self.repo_url = repo_url
         self.threshold = threshold
-        self.status = str(status) if status else status
+        self.status = status
         self.push_to_closed = push_to_closed
         self.approval_required = approval_required
 
@@ -497,7 +510,6 @@ class PatchSet(object):
         return self.toDict().iteritems()
 
     def patchList(self):
-        import re
         if not self.patches:
             return []
         if isinstance(self.patches, (list, tuple)):
@@ -506,7 +518,6 @@ class PatchSet(object):
             return [int(x) for x in re.split(',', self.patches)]
 
     def toDict(self):
-        import re
         d = {}
         d['id'] = self.id
         d['bug_id'] = self.bug_id
@@ -515,6 +526,7 @@ class PatchSet(object):
         d['branch'] = self.branch
         d['try_run'] = self.try_run
         d['try_syntax'] = self.try_syntax
+        # only include times if they were specified
         if hasattr(self, 'creation_time'):
             d['creation_time'] = self.creation_time
         if hasattr(self, 'push_time'):

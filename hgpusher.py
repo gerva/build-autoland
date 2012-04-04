@@ -20,22 +20,23 @@ from util.hg import mercurial, apply_and_push, HgUtilError, \
 from util.retry import retry, retriable
 from util.commands import run_cmd
 
-log = logging.getLogger()
-LOGFORMAT = logging.Formatter(
-        '%(asctime)s\t%(module)s\t%(funcName)s\t%(message)s')
-LOGFILE = os.path.join(BASE_DIR, 'hgpusher.log')
-LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
-                    maxBytes=50000, backupCount=5)
-
 config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini'),
                                    os.path.join(BASE_DIR, 'secrets.ini')])
+
+log = logging.getLogger()
+LOGFORMAT = logging.Formatter(config['log_format'])
+LOGHANDLER = logging.handlers.RotatingFileHandler(
+                    os.path.join(BASE_DIR, config['log_hgpusher']),
+                    maxBytes=config['log_max_bytes'],
+                    backupCount=config['log_count'])
+
 bz = bz_utils.bz_util(api_url=config['bz_api_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
-LDAP = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
+ldap = ldap_utils.ldap_util(config['ldap_host'], int(config['ldap_port']),
         config['ldap_branch_api'],
         config['ldap_bind_dn'], config['ldap_password'])
-MQ = mq_utils.mq_util(host=config['mq_host'],
+mq = mq_utils.mq_util(host=config['mq_host'],
                       vhost=config['mq_vhost'],
                       username=config['mq_username'],
                       password=config['mq_password'],
@@ -168,7 +169,7 @@ class Patchset(object):
             self.try_syntax = config['hg_try_syntax']
 
         self.active_repo = os.path.join('active/%s' % (branch))
-        self.comment = ''
+        self.comments = ''
         self.setup_comment()
         self.user = user
 
@@ -176,17 +177,17 @@ class Patchset(object):
         """
         Set up the comment with the default comment header.
         """
-        self.comment = ['Autoland Patchset:\n\tPatches: %s\n\tBranch: %s%s'
-                % (', '.join(str(x.num) for x in self.patches),
-                   self.branch, (' => try' if self.try_run else ''))]
+        self.comments = ['Autoland Patchset:\n\tPatches: %s\n\tBranch: %s'
+                % (', '.join([str(x.num) for x in self.patches]),
+                   'try' if self.try_run else self.branch)]
 
     def add_comment(self, msg):
         """
         Check if the comment already contains the given message. If not,
         append it to the comment.
         """
-        if not msg in self.comment:
-            self.comment.append(msg)
+        if not msg in self.comments:
+            self.comments.append(msg)
 
     def process(self):
         """
@@ -202,7 +203,7 @@ class Patchset(object):
                     % (self.branch if not self.try_run else 'try'))
             self.add_comment('Insufficient permissions to push to %s.'
                     % (self.branch if not self.try_run else 'try'))
-            return (False, '\n'.join(self.comment))
+            return (False, '\n'.join(self.comments))
         # 2. Clone the repository
         cloned_rev = None
         try:
@@ -212,7 +213,7 @@ class Patchset(object):
                     % (self.branch, self.branch_url))
             self.add_comment('An error occurred while cloning %s.'
                     % (self.branch_url))
-            return (False, '\n'.join(self.comment))
+            return (False, '\n'.join(self.comments))
         # 3. Apply patches, with 3 attempts
         try:
             # make 3 attempts so that
@@ -220,7 +221,7 @@ class Patchset(object):
             # 2nd attempt is after an update -C,
             # 3rd attempt is a fresh clone
             retry(apply_and_push, attempts=3,
-                    retry_exceptions=(RetryException),
+                    retry_exceptions=(RetryException,),
                     cleanup=RepoCleanup(self.branch, self.branch_url),
                     args=(self.active_repo, self.push_url,
                           self.apply_patches, 1),
@@ -237,13 +238,13 @@ class Patchset(object):
                     % (err))
             self.add_comment('Patchset could not be applied and pushed.'
                              '\n%s' % (err))
-            return (False, '\n'.join(self.comment))
+            return (False, '\n'.join(self.comments))
         except (OSError), err:
             # There was an error with the active_repo location
             log.error('An error occurred: %s' % (err))
             self.add_comment('Patchset could not be applied and pushed.'
                              '\nAn unexpected error occurred')
-            return (False, '\n'.join(self.comment))
+            return (False, '\n'.join(self.comments))
         # Success
         self.setup_comment() # Clear the comment
         if self.try_run:
@@ -252,9 +253,9 @@ class Patchset(object):
                     'http://hg.mozilla.org/try/pushloghtml?changeset=%s'
                         % (revision))
             self.add_comment('Try run started, revision %s.'
-                    ' To cancel or monitor the job, see: %s'
-                    % (revision, os.path.join(config['tbpl_url'],
-                                            '?tree=Try&rev=%s' % (revision))))
+                    ' To cancel or monitor the job, see: %s?tree=%s&rev=%s'
+                    % (revision, config['tbpl_url'],
+                       common.TBPL_NAMES['try'], revision))
         else:
             # comment to bug with push information
             self.add_comment('\tDestination: '
@@ -262,15 +263,10 @@ class Patchset(object):
                             % (self.branch, revision))
             self.add_comment('Successfully applied and pushed patchset.\n'
                     '\tRevision: %s' % (revision))
-            if self.branch == 'mozilla-central':
-                self.add_comment('To monitor the commit, see: %s'
-                        % (os.path.join(config['tbpl_url'],
-                           '?tree=Firefox&rev=%s' % (revision))))
-            elif self.branch == 'mozilla-inbound':
-                self.add_comment('To monitor the commit, see: %s'
-                        % (os.path.join(config['tbpl_url'],
-                           '?tree=Mozilla-Inbound&rev=%s' % (revision))))
-        return (revision, '\n'.join(self.comment))
+            self.add_comment('To monitor the commit, see; %s?tree=%s&rev=%s'
+                    % (config['tbpl_url'],
+                       common.TBPL_NAMES[self.branch], revision))
+        return (revision, '\n'.join(self.comments))
 
     def apply_patches(self, branch_dir, attempt):
         """
@@ -404,20 +400,20 @@ def in_ldap_group(email, group):
     """
     Checks ldap if either email or the bz_email are a member of the group.
     """
-    if LDAP.is_member_of_group(email, group):
+    if ldap.is_member_of_group(email, group):
         return True
-    bz_email = LDAP.get_bz_email(email)
-    return (bz_email and LDAP.is_member_of_group(bz_email, group))
+    bz_email = ldap.get_bz_email(email)
+    return (bz_email and ldap.is_member_of_group(bz_email, group))
 
 def has_sufficient_permissions(user_email, branch):
     """
-    Searches LDAP to see if the user kicking off the autoland process
-    has sufficient LDAP perms.
+    Searches ldap to see if the user kicking off the autoland process
+    has sufficient ldap perms.
     """
-    group = LDAP.get_branch_permissions(branch)
+    group = ldap.get_branch_permissions(branch)
     if group == None:
         return False
-    return common.in_ldap_group(LDAP, user_email, group)
+    return common.in_ldap_group(ldap, user_email, group)
 
 def import_patch(repo, patch, try_run, bug_id, branch, user=None,
         try_syntax=config['hg_try_syntax'], landing_user=None):
@@ -481,8 +477,6 @@ def generate_commit_message(repo, user, bug_id, patch, branch):
     if not re.search('\s+r=[^\s]+', output):
         # If we are landing to branch, we know that there are no r-
         for rev in patch.reviews:
-            r_types[rev['type']]
-            rev['reviewer']['email']
             output += ' %s=%s' \
                     % (r_types[rev['type']], rev['reviewer']['email'])
     if not re.search('\s+a=[^\s]+', output):
@@ -581,7 +575,7 @@ def valid_job_message(message):
                     return False
     return True
 
-@MQ.generate_callback
+@mq_utils.mq_util.generate_callback
 def message_handler(message):
     """
     Handles all incoming messages.
@@ -591,9 +585,7 @@ def message_handler(message):
     if 'job_type' not in data:
         log.error('[HgPusher] Erroneous message: %s' % (message))
         return
-    if data['job_type'] == 'command':
-        pass
-    elif data['job_type'] == 'patchset':
+    if data['job_type'] == 'patchset':
         # check that all necessary data is present
         if not valid_job_message(data):
             # comment?
@@ -610,8 +602,8 @@ def message_handler(message):
                                                         'mozilla-central', 1)
         if 'push_url' not in data:
             data['push_url'] = data['branch_url']
-        data['push_url'] = data['push_url'].replace('https', 'ssh', 1)
-        data['push_url'] = data['push_url'].replace('http', 'ssh', 1)
+        data['push_url'] = data['push_url'].replace('https://', 'ssh://', 1)
+        data['push_url'] = data['push_url'].replace('http://', 'ssh://', 1)
 
         patchset = Patchset(data['patchsetid'],
                         data['bug_id'],
@@ -633,14 +625,14 @@ def message_handler(message):
                     'patchsetid': patchset.num,
                     'revision' : patch_revision,
                     'comment' : comment }
-            MQ.send_message(msg, 'db')
+            mq.send_message(msg, 'db')
         else:
             # error came when processing the patchset
             msg = { 'type' : 'ERROR', 'action' : 'PATCHSET.APPLY',
                     'patchsetid' : patchset.num,
                     'bug_id' : patchset.bug_id,
                     'comment' : comment }
-            MQ.send_message(msg, 'db')
+            mq.send_message(msg, 'db')
 
 def main():
     # set up logging
@@ -648,14 +640,14 @@ def main():
     LOGHANDLER.setFormatter(LOGFORMAT)
     log.addHandler(LOGHANDLER)
 
-    MQ.connect()
-    MQ.declare_and_bind(config['mq_hgp_queue'], 'hgpusher')
+    mq.connect()
+    mq.declare_and_bind(config['mq_hgp_queue'], 'hgpusher')
 
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
             if arg == '--purge-queue':
                 # purge the autoland queue
-                MQ.purge_queue(config['mq_hgp_queue'], prompt=True)
+                mq.purge_queue(config['mq_hgp_queue'], prompt=True)
                 exit(0)
 
     try:
@@ -683,7 +675,7 @@ def main():
                     pass
                 os.makedirs('active')
 
-                MQ.listen(queue=config['mq_hgp_queue'],
+                mq.listen(queue=config['mq_hgp_queue'],
                         callback=message_handler)
             except error.LockHeld:
                 # couldn't take the lock, check next workdir
