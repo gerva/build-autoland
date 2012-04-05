@@ -16,7 +16,7 @@ TBPL_NAMES = {
 
 def get_configuration(conf_files):
     # load configuration
-    config = ConfigParser.ConfigParser()
+    config = ConfigParser.RawConfigParser()
     for conf_file in conf_files:
         config.read(conf_file)
     cfg = {}

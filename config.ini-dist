@@ -2,6 +2,7 @@
 work_dir=build
 staging=1
 tbpl_url=https://tbpl.mozilla.org/
+tools=
 
 [log]
 autoland_queue=autoland_queue.log

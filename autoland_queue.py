@@ -11,14 +11,14 @@ import datetime
 import urllib2
 import subprocess
 
-from utils import mq_utils, bz_utils, ldap_utils, common
+from utils import common
 BASE_DIR = common.get_base_dir(__file__)
-site.addsitedir('%s/../../lib/python' % (BASE_DIR))
-
-from utils.db_handler import dbHandler, PatchSet, Branch, Comment
-
 config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini'),
                                    os.path.join(BASE_DIR, 'secrets.ini')])
+
+site.addsitedir(os.path.join(config['tools'], 'lib/python'))
+from utils import mq_utils, bz_utils, ldap_utils
+from utils.db_handler import dbHandler, PatchSet, Branch, Comment
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(config['log_format'])

@@ -11,17 +11,18 @@ import logging.handlers
 import shutil
 from mercurial import error, lock   # For lockfile on working dirs
 
-from utils import bz_utils, mq_utils, common, ldap_utils
+from utils import common
 BASE_DIR = common.get_base_dir(__file__)
-site.addsitedir('%s/../../lib/python' % (BASE_DIR))
+config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini'),
+                                   os.path.join(BASE_DIR, 'secrets.ini')])
 
+site.addsitedir(os.path.join(config['tools'], 'lib/python'))
 from util.hg import mercurial, apply_and_push, HgUtilError, \
                     update, get_revision
 from util.retry import retry, retriable
 from util.commands import run_cmd
 
-config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini'),
-                                   os.path.join(BASE_DIR, 'secrets.ini')])
+from utils import bz_utils, mq_utils, common, ldap_utils
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(config['log_format'])
