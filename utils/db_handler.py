@@ -277,7 +277,7 @@ class DBHandler(object):
                     ps_id=x[0], bug_id=x[1], patches=x[2], author=x[3],
                     retries=x[4], revision=x[5], branch=x[6], try_run=x[7],
                     try_syntax=x[8], creation_time=x[9], push_time=x[10],
-                    completion_time=x[11]),
+                    completion_time=x[11])
                 for x in rows]
             print ps
             return ps
