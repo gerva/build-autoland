@@ -12,8 +12,7 @@ import urllib2
 
 from utils import common
 BASE_DIR = common.get_base_dir(__file__)
-config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini'),
-                                   os.path.join(BASE_DIR, 'secrets.ini')])
+config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini')])
 
 site.addsitedir(os.path.join(config['tools'], 'lib/python'))
 from utils.db_handler import DBHandler, PatchSet, Branch, Comment
