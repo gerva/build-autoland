@@ -21,9 +21,7 @@ from utils import mq_utils, bz_utils
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(
         '%(asctime)s\t%(module)s\t%(funcName)s\t%(message)s')
-LOGFILE = os.path.join(BASE_DIR, 'autoland_queue.log')
-LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
-                    maxBytes=50000, backupCount=5)
+LOGHANDLER = logging.StreamHandler() # just log to stdout; supervisord will handle it
 
 bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],

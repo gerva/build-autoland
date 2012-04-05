@@ -26,8 +26,7 @@ log = logging.getLogger()
 LOGFORMAT = logging.Formatter(
         '%(asctime)s\t%(module)s\t%(funcName)s\t%(message)s')
 LOGFILE = os.path.join(BASE_DIR, 'hgpusher.log')
-LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
-                    maxBytes=50000, backupCount=5)
+LOGHANDLER = logging.StreamHandler() # just log to stdout; supervisord will handle it
 mq = mq_utils.mq_util()
 
 bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
