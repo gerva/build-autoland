@@ -1,3 +1,7 @@
+import site
+site.addsitedir('vendor')
+site.addsitedir('vendor/lib/python')
+
 import time
 import os, sys
 import re
@@ -6,21 +10,22 @@ import logging.handlers
 import datetime
 import urllib2
 
-from utils import mq_utils, bz_utils, common
-base_dir = common.get_base_dir(__file__)
-import site
-site.addsitedir('%s/../../lib/python' % (base_dir))
+from utils import common
+BASE_DIR = common.get_base_dir(__file__)
+config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini'),
+                                   os.path.join(BASE_DIR, 'secrets.ini')])
 
+site.addsitedir(os.path.join(config['tools'], 'lib/python'))
 from utils.db_handler import DBHandler, PatchSet, Branch, Comment
+from utils import mq_utils, bz_utils
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(
         '%(asctime)s\t%(module)s\t%(funcName)s\t%(message)s')
-LOGFILE = os.path.join(base_dir, 'autoland_queue.log')
+LOGFILE = os.path.join(BASE_DIR, 'autoland_queue.log')
 LOGHANDLER = logging.handlers.RotatingFileHandler(LOGFILE,
                     maxBytes=50000, backupCount=5)
 
-config = common.get_configuration(os.path.join(base_dir, 'config.ini'))
 bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],
         username=config['bz_username'], password=config['bz_password'])
@@ -602,7 +607,7 @@ def main():
             # to poll by revision. This will allow for posting back to
             # landfill.
             for revision in db.PatchSetGetRevs():
-                cmd = ['bash', os.path.join(base_dir,
+                cmd = ['bash', os.path.join(BASE_DIR,
                                     'run_schedulerDbPoller_staging')]
                 cmd.append(revision)
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
