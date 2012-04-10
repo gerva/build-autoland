@@ -19,8 +19,6 @@ from mercurial import lock, error
 # sets up a rotating logfile that's written to the working dir
 log = logging.getLogger()
 FORMAT = "%(asctime)s - %(module)s - %(funcName)s - %(message)s"
-LOGFILE = 'schedulerDBpoller.log'
-POSTED_BUGS = 'postedbugs.log'
 POLLING_INTERVAL = 14400 # 4 hours
 TIMEOUT = 43200 # 12 hours
 MAX_POLLING_INTERVAL = 172800 # 48 hours
@@ -43,6 +41,7 @@ class SchedulerDBPoller():
         self.dry_run = dry_run
         self.verbose = verbose
         self.messages = messages
+        self.posted_bugs = self.config.get('log', 'posted_bugs')
 
         # Set up the message queue
         if self.messages:
@@ -327,7 +326,7 @@ class SchedulerDBPoller():
                         "try-builds/%s-%s""" % (author, revision)
         return message
 
-    def WriteToBuglist(self, revision, bug, filename=POSTED_BUGS):
+    def WriteToBuglist(self, revision, bug):
         """
         Writes a bug #, timestamp, and build's info to the BUGLIST to
         track what has been posted
@@ -692,11 +691,6 @@ if __name__ == '__main__':
     by revision for checking again later.
     """
 
-    log.setLevel(logging.INFO)
-    handler = logging.handlers.RotatingFileHandler(LOGFILE,
-                    maxBytes=50000, backupCount=5)
-    log.addHandler(handler)
-
     parser = ArgumentParser()
     parser.add_argument("-b", "--branch",
                         dest="branch",
@@ -736,6 +730,9 @@ if __name__ == '__main__':
                         help="toggle for checking if --post-to-bugzilla "\
                              "is in the build's comments",
                         action='store_true')
+    parser.add_argument("-l", "--log-file",
+                        dest="log_file",
+                        help="specify the file path to log to.")
     parser.set_defaults(
         branch="try",
         cache_dir="cache",
@@ -745,6 +742,7 @@ if __name__ == '__main__':
         dry_run = False,
         messages = True,
         flag_check = False,
+        log_file = None,
     )
 
     options, args = parser.parse_known_args()
@@ -759,6 +757,17 @@ if __name__ == '__main__':
     try:
         lock_file = lock.lock(os.path.join(
             os.getcwd(), '.schedulerDbPoller.lock'), timeout=1)
+
+        # set up logging
+        log.setLevel(logging.INFO)
+        if not options.log_file:
+            # log to stdout
+            handler = logging.StreamHandler()
+        else:
+            handler = logging.handlers.RotatingFileHandler(options.log_file,
+                            maxBytes=50000, backupCount=5)
+        log.addHandler(handler)
+
 
         if options.revision:
             poller = SchedulerDBPoller(branch=options.branch,
