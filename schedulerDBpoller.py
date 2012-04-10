@@ -755,8 +755,8 @@ if __name__ == '__main__':
 
     lock_file = None
     try:
-        lock_file = lock.lock(os.path.join(
-            os.getcwd(), '.schedulerDbPoller.lock'), timeout=1)
+        lock_file = lock.lock(os.path.join('/tmp', '.schedulerDbPoller.lock'),
+                              timeout=1)
 
         # set up logging
         log.setLevel(logging.INFO)
