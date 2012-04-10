@@ -7,7 +7,6 @@ import os, sys
 import re
 import subprocess
 import logging
-import logging.handlers
 import shutil
 from mercurial import error, lock   # For lockfile on working dirs
 
@@ -25,10 +24,7 @@ from utils import bz_utils, mq_utils, common, ldap_utils
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(config['log_format'])
-LOGHANDLER = logging.handlers.RotatingFileHandler(
-                    os.path.join(BASE_DIR, config['log_hgpusher']),
-                    maxBytes=config['log_max_bytes'],
-                    backupCount=config['log_count'])
+LOGHANDLER = logging.StreamHandler()    # log to stdout
 
 bz = bz_utils.bz_util(api_url=config['bz_api_url'],
         attachment_url=config['bz_attachment_url'],
@@ -688,7 +684,7 @@ def main():
                     raise
     except Exception, err:
         log.error('An error occurred: %s\n%s'
-                % (err, traceback.print_exc()))
+                % (err, traceback.format_exc()))
         exit(1)
 
 if __name__ == '__main__':

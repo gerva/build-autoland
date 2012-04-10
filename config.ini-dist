@@ -5,12 +5,8 @@ tbpl_url=https://tbpl.mozilla.org/
 tools=
 
 [log]
-autoland_queue=autoland_queue.log
-hgpusher=hgpusher.log
 posted_bugs=postedbugs.log
-format=%(asctime)s\t%(module)s\t%(funcName)s\t%(message)s
-max_bytes=50000
-count=5
+format=%(asctime)s - %(module)s - %(funcName)s - %(message)s
 
 [hg]
 base_url=ssh://hg.mozilla.org/

@@ -6,7 +6,6 @@ import re
 import time
 import os, sys
 import logging
-import logging.handlers
 import datetime
 import urllib2
 import subprocess
@@ -21,10 +20,7 @@ from utils.db_handler import dbHandler, PatchSet, Branch, Comment
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(config['log_format'])
-LOGHANDLER = logging.handlers.RotatingFileHandler(
-                    os.path.join(BASE_DIR, config['log_autoland_queue']),
-                    maxBytes=config['log_max_bytes'],
-                    backupCount=config['log_count'])
+LOGHANDLER = logging.StreamHandler()    # log to stdout
 
 # Number of times to retry posting a comment
 COMMENT_RETRIES = 5
