@@ -321,15 +321,14 @@ Results (out of %d total builds):\n""" % (revision, self.branch.title(),
         Also calls RemoveCache on the revision once it's been posted
         """
         if self.dry_run:
-            log.debug("DRY_RUN: WRITING TO %s: %s" % (filename, revision))
+            log.debug("DRY_RUN: WRITING TO %s: %s" % (self.posted_bugs, revision))
         else:
             try:
-                f = open(filename, 'a')
+                f = open(self.posted_bugs, 'a')
                 f.write("%s|%s|%d|%s\n" % (bug, revision, time(),
                     strftime("%a, %d %b %Y %H:%M:%S %Z", localtime())))
                 f.close()
-                if self.verbose:
-                    log.debug("WROTE TO %s: %s" % (filename, revision))
+                log.debug("WROTE TO %s: %s" % (self.posted_bugs, revision))
                 self.RemoveCache(revision)
             except:
                 traceback.print_exc(file=sys.stdout)
