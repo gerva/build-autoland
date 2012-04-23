@@ -16,7 +16,11 @@ config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini')])
 
 site.addsitedir(os.path.join(config['tools'], 'lib/python'))
 from utils import mq_utils, bz_utils, ldap_utils
-from utils.db_handler import dbHandler, PatchSet, Branch, Comment
+from utils.db_handler import DBHandler, PatchSet, Branch, Comment
+
+# permissions log to track all granted/used permissions
+plog = logging.getLogger('permissions')
+PLOGHANDLER = logging.FileHandler(config['log_permissions'])
 
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(config['log_format'])
@@ -37,7 +41,7 @@ ldap = ldap_utils.ldap_util(config['ldap_host'],
                             branch_api=config['ldap_branch_api'],
                             bind_dn=config['ldap_bind_dn'],
                             password=config['ldap_password'])
-db = dbHandler(config['databases_autoland_db_url'])
+db = DBHandler(config['databases_autoland_db_url'])
 
 def get_reviews(attachment):
     """
@@ -111,22 +115,31 @@ def get_approval_status(patches, branch, perms):
                 continue
             if app['result'] == '+':
                 # Found an approval, but keep on looking in case there is
-                # afailed or pending approval.
+                # a failed or pending approval.
                 if common.in_ldap_group(ldap, app['approver']['email'], perms):
-                    log.info("PERMISSIONS: Approver %s has valid %s "
-                             "permissions for branch %s"
-                             % (app['approver']['email'], perms, branch))
+                    plog.info("PATCH %s: Approver %s has valid %s "
+                              "permissions for branch %s"
+                             % (p_id, app['approver']['email'], perms, branch))
                     approved = True
-                else:
-                    if p_id not in invalid: invalid.append(str(p_id))
+                elif p_id not in invalid:
+                        plog.info("PATCH %s: Approver %s has invalid %s "
+                                  "permissions for branch %s"
+                             % (p_id, app['approver']['email'], perms, branch))
+                        invalid.append(str(p_id))
             elif app['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
             else:
                 # non-approval
-                if p_id not in failed: failed.append(str(p_id))
+                if p_id not in failed:
+                    plog.info("PATCH %s: Approval failed for branch %s."
+                        % (p_id, branch))
+                    failed.append(str(p_id))
         if not approved:
             # There is no approval, so consider it pending.
-            if p_id not in pending: pending.append(str(p_id))
+            if p_id not in pending:
+                plog.info("PATCH %s: No approval for branch %s."
+                        % (p_id, branch))
+                pending.append(str(p_id))
 
     if failed:
         return ('FAIL', failed)
@@ -163,21 +176,28 @@ def get_review_status(patches, perms):
                 # Found a passed review, but keep on looking in case there is
                 # a failed or pending review.
                 if common.in_ldap_group(ldap, rev['reviewer']['email'], perms):
-                    log.info("PERMISSIONS: Reviewer %s has valid %s "
-                             "permissions" % (rev['reviewer']['email'], perms))
+                    plog.info("PATCH %s: Reviewer %s has valid %s permissions"
+                            % (p_id, rev['reviewer']['email'], perms))
                     reviewed = True
                 elif p_id not in invalid:
-                    log.info("PERMISSIONS ERROR: Reviewer %s has invalid %s "
-                             "permissions" % (rev['reviewer']['email'], perms))
+                    plog.warn("PATCH %s: Reviewer %s "
+                              "does not have %s permissions"
+                            % (p_id, rev['reviewer']['email'], perms))
                     invalid.append(str(p_id))
             elif rev['result'] == '?':
                 if p_id not in pending: pending.append(str(p_id))
             else:
-                # non-approval
-                if p_id not in failed: failed.append(str(p_id))
+                # non-review
+                if p_id not in failed:
+                    plog.info("PATCH %s: No review for branch %s."
+                            % (p_id, branch))
+                    failed.append(str(p_id))
         if not reviewed:
             # There is no review on this, so consider it to be pending.
-            if p_id not in pending: pending.append(str(p_id))
+            if p_id not in pending:
+                plog.info("PATCH %s: No review for branch %s."
+                        % (p_id, branch))
+                pending.append(str(p_id))
 
     if failed:
         return ('FAIL', failed)
@@ -320,8 +340,7 @@ def bz_search_handler():
         patch_group = [x for x in patch_group if x['status'] == 'waiting']
 
         # check patch reviews & permissions
-        patches = get_patches(patch_set.bug_id,
-                               [x['id'] for x in patch_group])
+        patches = get_patches(bug_id, [x['id'] for x in patch_group])
         if not patches:
             # do not have patches to push, kick it out of the queue
 # XXX UPDATE THE EXTENSION XXX
@@ -819,6 +838,10 @@ def main():
     LOGHANDLER.setFormatter(LOGFORMAT)
     log.addHandler(LOGHANDLER)
 
+    PLOGHANDLER.setLevel(logging.INFO)
+    PLOGHANDLER.setFormatter(LOGFORMAT)
+    plog.addHandler(PLOGHANDLER)
+
     # XXX: use argparse
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
@@ -829,26 +852,10 @@ def main():
             elif arg == '--debug' or arg == '-d':
                 log.setLevel(logging.DEBUG)
 
-    # XXX: Switch to use gevent or twisted
     while True:
         # search bugzilla for any relevant bugs
         bz_search_handler()
         next_poll = time.time() + int(config['bz_poll_frequency'])
-
-        if config.get('staging'):
-            # if this is a staging instance, launch schedulerDbPoller in order
-            # to poll by revision. This will allow for posting back to
-            # landfill.
-            for revision in db.PatchSetGetRevs():
-                cmd = ['bash', os.path.join(BASE_DIR,
-                                    'run_schedulerDbPoller_staging')]
-                cmd.append(revision)
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
-                (out, err) = proc.communicate()
-                log.info('schedulerDbPoller Returned: %d' % (proc.returncode))
-                log.info('stdout: %s' % (out))
-                log.info('stderr: %s' % (err))
 
         # take care of any comments that couldn't previously be posted
         handle_comments()

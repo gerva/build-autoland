@@ -7,6 +7,7 @@ tools=
 [log]
 posted_bugs=postedbugs.log
 format=%(asctime)s - %(module)s - %(funcName)s - %(message)s
+permissions=/data/autoland_permissions.log
 
 [hg]
 base_url=ssh://hg.mozilla.org/
@@ -48,7 +49,7 @@ branch_api=http://hg.mozilla.org/repo-group?repo=/
 autoland_db_url=sqlite:///test/autoland.sqlite
 
 [self_serve]
-url=https://build.mozilla.org/buildapi/self-serve
+url=https://secure.pub.build.mozilla.org/buildapi/self-serve
 user=autoland@mozilla.com
 # password is in secrets.ini
 

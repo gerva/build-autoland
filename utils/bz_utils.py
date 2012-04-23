@@ -85,7 +85,7 @@ class bz_util(object):
         """
         Get the bug data from the BzAPI.
         """
-        return bz.request('bug/%s' % (bug_id))
+        return self.request('bug/%s' % (bug_id))
 
     def get_patch(self, patch_id, path='.', create_path=False,
             overwrite_patch=False):

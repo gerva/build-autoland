@@ -22,6 +22,10 @@ from util.commands import run_cmd
 
 from utils import bz_utils, mq_utils, common, ldap_utils
 
+# permissions log to track all granted/used permissions
+# permissions logs are put into hgpusher.%d/permissions.log
+plog = logging.getLogger('permissions')
+
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(config['log_format'])
 LOGHANDLER = logging.StreamHandler()    # log to stdout
@@ -145,7 +149,7 @@ class Patch(object):
 
 class Patchset(object):
     def __init__(self, ps_id, bug_id, patches, try_run, push_url,
-            branch, branch_url, user, try_syntax=None):
+            branch, branch_url, user, to_branch, try_syntax=None):
         """
         Creates a Patchset object.
         Fills in an active_repo field to point to a directory for
@@ -159,6 +163,7 @@ class Patchset(object):
         self.push_url = push_url
         self.branch = branch
         self.branch_url = branch_url
+        self.to_branch = to_branch # Final destination a branch?
         if try_syntax != None:
             self.try_syntax = try_syntax
         else:
@@ -193,12 +198,12 @@ class Patchset(object):
             3. Apply patches, with 3 attempts
         """
         # 1. Check permissions on each patch
-        if not has_sufficient_permissions(self.user,
-                self.branch if not self.try_run else 'try'):
+        outgoing = self.branch if not self.try_run else 'try'
+        if not has_sufficient_permissions(self.user, outgoing):
             log.error('Insufficient permissions to push to %s.'
-                    % (self.branch if not self.try_run else 'try'))
+                    % (outgoing))
             self.add_comment('Insufficient permissions to push to %s.'
-                    % (self.branch if not self.try_run else 'try'))
+                    % (outgoing))
             return (False, '\n'.join(self.comments))
         # 2. Clone the repository
         cloned_rev = None
@@ -259,9 +264,10 @@ class Patchset(object):
                             % (self.branch, revision))
             self.add_comment('Successfully applied and pushed patchset.\n'
                     '\tRevision: %s' % (revision))
-            self.add_comment('To monitor the commit, see; %s?tree=%s&rev=%s'
-                    % (config['tbpl_url'],
-                       common.TBPL_NAMES[self.branch], revision))
+            tbpl_name = common.TBPL_NAMES[self.branch]
+            if tbpl_name:
+                self.add_comment('To monitor the commit, see; %s?tree=%s&rev=%s'
+                    % (config['tbpl_url'], tbpl_name, revision))
         return (revision, '\n'.join(self.comments))
 
     def apply_patches(self, branch_dir, attempt):
@@ -294,11 +300,9 @@ class Patchset(object):
             # 2. has valid headers. If try run, put user data into patch.user
             valid_header = has_valid_header(patch.file)
             if not valid_header:
-                # check branch name, since self.try_run is set to true even if
-                # it is a try run for a branch landing.
                 # On a branch landing, valid headers are required. This means
                 # that the job should fail on the try run.
-                if not self.branch.lower() == 'try':
+                if self.to_branch:
                     log.error('[Patch %s] Invalid header.' % (patch.num))
                     self.add_comment('Patch %s doesn\'t have '
                             'a properly formatted header. To land to branches,'
@@ -397,9 +401,14 @@ def in_ldap_group(email, group):
     Checks ldap if either email or the bz_email are a member of the group.
     """
     if ldap.is_member_of_group(email, group):
+        plog.info("User %s has level %s" % (group))
         return True
     bz_email = ldap.get_bz_email(email)
-    return (bz_email and ldap.is_member_of_group(bz_email, group))
+    if bz_email and ldap.is_member_of_group(bz_email, group):
+        plog.info("User %s with ldap email %s has level %s"
+                % (email, bz_email, group))
+        return True
+    return False
 
 def has_sufficient_permissions(user_email, branch):
     """
@@ -409,7 +418,14 @@ def has_sufficient_permissions(user_email, branch):
     group = ldap.get_branch_permissions(branch)
     if group == None:
         return False
-    return common.in_ldap_group(ldap, user_email, group)
+    plog.info("Branch %s requires %s" % (branch, group))
+    if not common.in_ldap_group(ldap, user_email, group):
+        plog.info("User %s denied permissions to land on %s"
+                % (user_email, branch))
+        return False
+    plog.info("User %s granted permissions to land on %s"
+            % (user_email, branch))
+    return True
 
 def import_patch(repo, patch, try_run, bug_id, branch, user=None,
         try_syntax=config['hg_try_syntax'], landing_user=None):
@@ -596,6 +612,12 @@ def message_handler(message):
             data['branch'] = 'mozilla-central'
             data['branch_url'] = data['branch_url'].replace('try',
                                                         'mozilla-central', 1)
+            data['to_branch'] = False
+        else:
+            # this has a branch as final destination, rather than a
+            # default mozilla-central try run
+            data['to_branch'] = True
+
         if 'push_url' not in data:
             data['push_url'] = data['branch_url']
         data['push_url'] = data['push_url'].replace('https://', 'ssh://', 1)
@@ -608,6 +630,7 @@ def message_handler(message):
                         data['push_url'],
                         data['branch'], data['branch_url'],
                         data['user'],
+                        data['to_branch'],
                         data.get('try_syntax'))
 
         (patch_revision, comment) = patchset.process()
@@ -670,6 +693,11 @@ def main():
                 except OSError:
                     pass
                 os.makedirs('active')
+
+                plog_handler = logging.FileHandler('permissions.log')
+                plog_handler.setFormatter(LOGFORMAT)
+                plog_handler.setLevel(logging.INFO)
+                plog.addHandler(plog_handler)
 
                 mq.listen(queue=config['mq_hgp_queue'],
                         callback=message_handler)
