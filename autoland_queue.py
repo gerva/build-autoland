@@ -15,13 +15,13 @@ BASE_DIR = common.get_base_dir(__file__)
 config = common.get_configuration([os.path.join(BASE_DIR, 'config.ini')])
 
 site.addsitedir(os.path.join(config['tools'], 'lib/python'))
-from utils.db_handler import DBHandler, PatchSet, Branch, Comment
-from utils import mq_utils, bz_utils
-
 log = logging.getLogger()
 LOGFORMAT = logging.Formatter(
         '%(asctime)s\t%(module)s\t%(funcName)s\t%(message)s')
 LOGHANDLER = logging.StreamHandler() # just log to stdout; supervisord will handle it
+from utils.db_handler import DBHandler, PatchSet, Branch, Comment
+from utils import mq_utils, bz_utils
+
 
 bz = bz_utils.bz_util(api_url=config['bz_api_url'], url=config['bz_url'],
         attachment_url=config['bz_attachment_url'],
@@ -262,20 +262,22 @@ def bz_search_handler():
         log.debug('Found and processing tag %s' % (tag))
         # get the explicitly listed patches, if any
         patch_group = get_patches_from_tag(tag) if not None else []
+        if patch_group is None:
+            patch_group = []
 
         # get try syntax, if any
         try_syntax = get_try_syntax_from_tag(tag)
 
-        ps = PatchSet()
         # all runs will get a try_run by default for now
-        ps.try_syntax = try_syntax
-        ps.branch = ','.join(branches)
-        ps.patches = patch_group
-        ps.bug_id = bug_id
+        ps = PatchSet(try_syntax=try_syntax, branch=','.join(branches),
+                 bug_id=bug_id, patches=patch_group)
+        log.debug("Patch_Group: %s\npatchList(): %s\n"
+                % (patch_group, ps.patchList()))
 
         # check patch reviews & permissions
         patches = get_patchset(ps.bug_id, ps.try_run,
                                ps.patchList(), review_comment=False)
+        log.debug("Patches from get_patchset: %s" % patches)
         if not patches:
             # do not have patches to push, kick it out of the queue
             bz.remove_whiteboard_tag(tag.replace('[', '\[').replace(']', '\]'),

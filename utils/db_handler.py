@@ -10,6 +10,9 @@ from db_utils import NO_RESULT
 from db_utils import get_branch_name, get_platform, get_build_type, \
 get_job_type, get_revision, results_to_str, status_to_str
 
+import logging
+log = logging.getLogger(__name__)
+
 class DBHandler(object):
 
     def __init__(self, url):
@@ -461,6 +464,7 @@ class PatchSet(object):
         self.id = id
         self.bug_id = bug_id
         # Patches needs to be a string so that sqlalchemy can insert it
+        log.debug( "Creating patchset with patches: %s" % patches)
         if patches:
             self.patches = re.sub('\[| |\]', '', str(patches))
         else:
@@ -483,12 +487,15 @@ class PatchSet(object):
 
     def patchList(self):
         import re
+        log.debug("Generating patchList from: %s" % self.patches)
         if not self.patches:
             return ''
         if isinstance(self.patches, list):
             return self.patches
         if isinstance(self.patches, str):
-            return map(lambda x: int(x), re.split(',', self.patches))
+            out =  map(lambda x: int(x), re.split(',', self.patches))
+            log.debug("Out the patchList: %s" % out)
+            return out
 
     def toDict(self):
         import re
