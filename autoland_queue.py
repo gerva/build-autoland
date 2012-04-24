@@ -189,14 +189,12 @@ def get_review_status(patches, perms):
             else:
                 # non-review
                 if p_id not in failed:
-                    plog.info("PATCH %s: No review for branch %s."
-                            % (p_id, branch))
+                    plog.info("PATCH %s: No passing review." % (p_id))
                     failed.append(str(p_id))
         if not reviewed:
             # There is no review on this, so consider it to be pending.
             if p_id not in pending:
-                plog.info("PATCH %s: No review for branch %s."
-                        % (p_id, branch))
+                plog.info("PATCH %s: No review found." % (p_id))
                 pending.append(str(p_id))
 
     if failed:
@@ -368,7 +366,12 @@ def bz_search_handler():
                 log.error('Branch %s does not exist.' % (branch))
                 continue
 
-            branch_perms = ldap.get_branch_permissions(branch)
+            try:
+                branch_perms = ldap.get_branch_permissions(branch)
+            except ldap_utils.BranchDoesNotExist:
+                comment.append("Branch %s does not exist." % (branch))
+                branches.remove(branch)
+                continue
 
             # check if branch landing r+'s are present
             # check branch name against try since branch on try iteration
@@ -684,7 +687,13 @@ def handle_patchset(mq, patchset):
         db.PatchSetDelete(patchset)
         return
 
-    branch_perms = ldap.get_branch_permissions(branch.name)
+    try:
+        branch_perms = ldap.get_branch_permissions(branch.name)
+    except ldap_utils.BranchDoesNotExist:
+        post_comment("Autoland Failure:\n"
+                     "Cannot land to branch %s.\n"
+                     "Branch %s does not exist." % (branch, branch))
+        return
 
     # double check if this job should be run
     if patchset.branch.lower() != 'try':

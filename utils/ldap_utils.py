@@ -14,6 +14,9 @@ from util.retry import retriable
 
 log = logging.getLogger(__name__)
 
+class BranchDoesNotExist(Exception):
+    pass
+
 class ldap_util():
     def __init__(self, host, port, branch_api='', bind_dn='', password=''):
         self.host = host
@@ -121,12 +124,12 @@ class ldap_util():
         perms = result.read()
         perms = perms.rstrip()
         if 'is not an hg repository' in perms:
-            return None
+            raise BranchDoesNotExist
         if 'Need a repository' in perms or \
                'A problem occurred' in perms:
             log.error('An error has occurred with branch permissions api:\n'
                       '\turl: %s\n\tresponse: %s' % (url, perms))
-            raise Exception
+            raise Exception('InvalidBranchQuery %s' % perms)
         log.info('Required permissions for %s: %s' % (branch, perms))
         return perms
 
