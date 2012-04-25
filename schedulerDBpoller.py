@@ -15,6 +15,7 @@ import utils.bz_utils as bz_utils
 import utils.mq_utils as mq_utils
 import logging, logging.handlers
 from mercurial import lock, error
+import requests
 
 # sets up a rotating logfile that's written to the working dir
 log = logging.getLogger()
@@ -23,7 +24,7 @@ POLLING_INTERVAL = 14400 # 4 hours
 TIMEOUT = 43200 # 12 hours
 MAX_POLLING_INTERVAL = 172800 # 48 hours
 COMPLETION_THRESHOLD = 600 # 10 minutes
-MAX_ORANGE = 2
+MAX_ORANGE = 10
 
 # console logging, formatted
 logging.basicConfig(format=FORMAT)
@@ -45,9 +46,11 @@ class SchedulerDBPoller():
 
         # Set up the message queue
         if self.messages:
-            self.mq = mq_utils.mq_util()
-            self.mq.set_host(self.config.get('mq', 'host'))
-            self.mq.set_exchange(self.config.get('mq', 'exchange'))
+            self.mq = mq_utils.mq_util(host=self.config.get('mq', 'host'),
+                    vhost=self.config.get('mq', 'vhost'),
+                    username=self.config.get('mq', 'username'),
+                    password=self.config.get('mq', 'password'),
+                    exchange=self.config.get('mq', 'exchange'))
             self.mq.connect()
 
         # Set up bugzilla api connection
@@ -72,8 +75,7 @@ class SchedulerDBPoller():
         """
         timed_out = False
         now = time()
-        if self.verbose:
-            log.debug("Checking for timed out revision: %s" % revision)
+        log.debug("Checking for timed out revision: %s" % revision)
         filename = os.path.join(self.cache_dir, revision)
         if os.path.exists(filename):
             try:
@@ -96,7 +98,7 @@ class SchedulerDBPoller():
                 timed_out = True
         return timed_out
 
-    def OrangeFactorHandling(self, buildrequests):
+    def OrangeFactorHandling(self, buildrequests, max_orange=MAX_ORANGE):
         """
         Checks buildrequests results.
         If all success except # warnings is <= MAX_ORANGE
@@ -111,30 +113,29 @@ class SchedulerDBPoller():
 
         returns:
             is_complete {True,False}
-            final_status {'SUCCESS', 'FAILURE', None}
+            final_status {'SUCCESS', 'FAILURE', 'RETRYING', None}
         """
-        is_complete = None
+        is_complete = False
         final_status = None
         results = self.CalculateResults(buildrequests)
-        if self.verbose:
-            log.debug("RESULTS (OrangeFactorHandling): %s" % results)
-        if results['total_builds'] == results['success'] + \
-                results['failure'] + results['other'] + \
-                results['skipped'] + results['exception']:
-            # It's really complete, now check for success
-            if results['total_builds'] == results['success']:
-                is_complete = True
-                final_status = "SUCCESS"
-                if self.verbose:
-                    log.debug("Complete and a success")
-            else:
-                is_complete = True
-                final_status = "FAILURE"
-                if self.verbose:
-                    log.debug("Complete and a failure")
-        elif results['total_builds'] - results['warnings'] == results['success'] \
-                and results['warnings'] <= (MAX_ORANGE * 2):
-            # Get buildernames where result was warnings
+
+        log.debug("RESULTS (OrangeFactorHandling): %s" % results)
+        if results['failure'] or results['other'] \
+                or results['skipped'] or results['exception']:
+            log.debug("Complete, at least one build failed.")
+            is_complete = True
+            final_status = "FAILURE"
+        elif results['success'] == results['total_builds']:
+            log.debug("Complete, all builds successful.")
+            is_complete = True
+            final_status = "SUCCESS"
+        elif results['warnings'] <= max_orange:
+            log.debug("Complete: %d warnings < threshold %d."
+                    % (results['warnings'], max_orange))
+            is_complete = True
+            final_status = "SUCCESS"
+        elif results['total_builds'] == results['success'] + results['warnings']:
+            log.debug("Have warnings. Check if it's a retry.")
             buildernames = {}
             for value in buildrequests.values():
                 br = value.to_dict()
@@ -145,51 +146,43 @@ class SchedulerDBPoller():
                 else:
                     buildernames[br['buildername']].append(
                             (br['results_str'], br['branch'], br['bid']))
-            retry_count = 0
-            retry_pass = 0
+
+            duplicates = []
             for name, info in buildernames.items():
-                # If we have more than one result for a builder name,
-                # compare the results
+                # collect all duplicates
                 if len(info) > 1:
-                    if self.verbose:
-                        log.debug("WE HAVE A DUPE: %s" % name)
-                    retry_count += 1
-                    c =  zip(info[0],info[1])
-                    if len(set(c[0])) > 1:
-                        if self.verbose:
-                            log.debug("We have a mismatch in %s" % set(c[0]))
-                        # We have a mismatch of results - is one a success?
-                        if 'success' in c[0]:
-                            if self.verbose:
-                                log.debug("There's a success, "
-                                          "incrementing retry_pass")
-                            retry_pass += 1
-                # Unique buildername with warnings, attempt a rebuild
+                    log.debug("We have a duplicate: %s" % (name))
+                    duplicates.append(info)
+
+            retry_count = len(duplicates)
+
+            if retry_count*2 >= results['warnings']:
+                log.debug("Finished retry run")
+                is_complete = True
+                # Remove all initial retried warnings
+                if results['warnings'] - retry_count <= max_orange:
+                    final_status = "SUCCESS"
                 else:
-                    for result, branch, bid in info:
+                    final_status = "FAILURE"
+            elif results['warnings'] > max_orange:
+                log.debug("Over max orange, trigger retries")
+                # attempt rebuilds
+                for info in buildernames.values():
+                    for (result, branch, bid) in info:
                         if result == 'warnings':
-                            if self.verbose:
-                                log.debug("Attempting to retry branch: "
-                                          "%s bid: %s" % (branch, bid))
+                            log.debug("Attempting to retry branch: "
+                                        "%s bid: %s" % (branch, bid))
                             try:
                                 post = self.SelfServeRebuild(bid)
                                 is_complete = False
                                 final_status = "RETRYING"
-                            except:
+                            except (urllib2.HTTPError, ValueError), err:
+                                log.warn("Unable to retry. Exception: %s" % (err))
                                 is_complete = True
                                 final_status = "FAILURE"
-            # Passed on Retry
-            if retry_count != 0 and retry_pass == retry_count:
-                is_complete = True
-                final_status = "SUCCESS"
-            # Failed on Retry
-            elif retry_count != 0:
-                is_complete = True
-                final_status = "FAILURE"
+
         else:
-            # too many warnings, no point retrying builds
-            if self.verbose:
-                log.debug("Too many warnings! Final = failure")
+            log.error("Getting invalid values from schedulerDB")
             is_complete = True
             final_status = "FAILURE"
 
@@ -200,30 +193,26 @@ class SchedulerDBPoller():
         Uses self-serve API to retrigger the buildid/branch sent in
         with a POST request
         """
-        password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
-        password_mgr.add_password(None,
-                                  uri=self.self_serve_api_url,
-                                  user=self.user,
-                                  passwd=self.password)
-        auth_handler = urllib2.HTTPBasicAuthHandler(password_mgr)
-        opener = urllib2.build_opener(auth_handler, urllib2.HTTPSHandler())
-        opener.addheaders = [
-         ('Content-Type', 'application/json'),
-         ('Accept', 'application/json'),
-         ]
-        urllib2.install_opener(opener)
-        data = urllib.urlencode({"build_id": buildid})
-        url = self.self_serve_api_url + "/" + self.branch
+        auth = (self.user, self.password)
+        headers = { 'Accepts' : 'application/json' }
+        data = { "build_id": buildid }
+        url = "%s/%s/build" % (self.self_serve_api_url, self.branch)
+        if self.dry_run:
+           log.debug("Would retry\n\tbuild_id: %s"
+                     "\n\turl: %s\n\tdata: %s" % (buildid, url, data))
+           return None
         try:
-            req = urllib2.Request(url, data)
-            req.method = "POST"
-            return json.loads(opener.open(req).read())
+            req = requests.post(url, auth=auth, headers=headers, data=data)
+            if req.status_code != 302:
+                req.raise_for_status()
+            else:
+                return json.loads(req.content)
         except urllib2.HTTPError, e:
-            log.debug("FAIL attempted rebuild for %s:%s -- %s"
+            log.warn("FAIL attempted rebuild for %s:%s -- %s"
                     % (self.branch, buildid, e))
             raise
         except ValueError, err:
-            log.debug("FAILED to load json result for %s:%s -- %s"
+            log.warn("FAILED to load json result for %s:%s -- %s"
                     % (self.branch, buildid, err))
             raise
 
@@ -234,9 +223,9 @@ class SchedulerDBPoller():
         """
         author = None
         for value in buildrequests.values():
-          br = value.to_dict()
-          if author == None:
-              author = br['authors']
+            br = value.to_dict()
+            if author == None:
+                author = br['authors']
         # if there's one author return it
         if len(author) == 1:
             return author[0]
@@ -262,14 +251,15 @@ class SchedulerDBPoller():
     def ProcessPushType(self, revision, buildrequests, flag_check=True):
         """
         Search buildrequest comments for try syntax and query autoland_db
-        returns type as "TRY", "AUTO", or None
+        returns type as "TRY", "RETRY", or None
             try: if "try: --post-to-bugzilla" is present in the
                  comments of a buildrequest
-            auto: if a check for 'autoland-' in the comments returns True
-                  (for future branch landings)
+            retry: if "try: --retry-oranges" is present in the
+                 comments of a buildrequest
             None: if not try request and Autoland system isn't tracking it
         """
         push_type = None
+        max_orange = MAX_ORANGE
         for value in buildrequests.values():
             br = value.to_dict()
             for comments in br['comments']:
@@ -279,9 +269,20 @@ class SchedulerDBPoller():
                             push_type = "TRY"
                     else:
                         push_type = "TRY"
-                if 'autoland-' in comments:
-                    push_type = "AUTO"
-        return push_type
+                    if '--retry-oranges' in comments:
+                        push_type = "RETRY"
+                        # eliminate any empty strings from the split
+                        max_orange = [x for x in
+                                comments.split('--retry-oranges') if x]
+                        if not len(max_orange) > 1:
+                            max_orange = MAX_ORANGE
+                            continue
+                        max_orange = max_orange[1].split()[0]
+                        try:
+                            max_orange = int(max_orange)
+                        except ValueError:
+                            max_orange = MAX_ORANGE
+        return push_type, max_orange
 
     def CalculateResults(self, buildrequests):
         """
@@ -412,7 +413,8 @@ class SchedulerDBPoller():
                     log.error(traceback.print_exc(file=sys.stdout))
                     raise
 
-    def CalculateBuildRequestStatus(self, buildrequests, revision=None):
+    def CalculateBuildRequestStatus(self, buildrequests,
+            revision=None, retry_oranges=False, max_orange=MAX_ORANGE):
         """
         Accepts buildrequests and calculates their results, calls
         orange_factor_handling to ensure completeness of results, makes sure
@@ -458,13 +460,11 @@ class SchedulerDBPoller():
                         # we'll wait a bit and make sure no tests are coming
                         is_complete = False
                         break
-            if is_complete:
-                # one more check before it's _really complete_
-                # -- any oranges to retry?
-                if self.verbose:
-                    log.debug("Check Orange Factor for rev: %s" % revision)
+            if is_complete and retry_oranges:
+                # Only want to check orange factor if we are retrying oranges
+                log.debug("Check Orange Factor for rev: %s" % revision)
                 is_complete, status['status_string'] = \
-                        self.OrangeFactorHandling(buildrequests)
+                        self.OrangeFactorHandling(buildrequests, max_orange)
         # check timeout, maybe it's time to kick this out of the tracking queue
         if revision != None:
             if self.revisionTimedOut(revision):
@@ -515,7 +515,7 @@ class SchedulerDBPoller():
             else:
                 log.debug("Type: %s Revision: %s - "
                         "bug comment & message being sent"
-                        % (push_type, revision))
+                        % (run_type, revision))
                 result = self.bz.notify_bug(message, bug)
         if result:
             self.WriteToBuglist(revision, bug)
@@ -556,17 +556,20 @@ class SchedulerDBPoller():
             'discard': False,
         }
         buildrequests = self.scheduler_db.GetBuildRequests(revision, self.branch)
-        run_type = self.ProcessPushType(revision, buildrequests, flag_check)
+        run_type, max_orange = self.ProcessPushType(
+                revision, buildrequests, flag_check)
         bugs = self.GetBugNumbers(buildrequests)
         info['status'], info['is_complete'] = \
-                self.CalculateBuildRequestStatus(buildrequests, revision)
-        if self.verbose:
-            log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s TYPE: "
-                      "%s IS_COMPLETE: %s"
-                      % (info['status'], bugs, type, info['is_complete']))
+                self.CalculateBuildRequestStatus(buildrequests,
+                        revision,
+                        retry_oranges=(run_type == "RETRY"),
+                        max_orange=max_orange)
+        log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s TYPE: "
+                  "%s IS_COMPLETE: %s"
+                  % (info['status'], bugs, type, info['is_complete']))
         log.debug("POLL_BY_REVISION: RESULTS: %s BUGS: %s "
                 "TYPE: %s IS_COMPLETE: %s"
-                % (info['status'], bugs, push_type, info['is_complete']))
+                % (info['status'], bugs, run_type, info['is_complete']))
         if info['is_complete'] and len(bugs) > 0:
             results = self.CalculateResults(buildrequests)
             info['message'] = self.GenerateResultReportMessage(
@@ -603,8 +606,7 @@ class SchedulerDBPoller():
         rev_report = self.GetRevisions(starttime,endtime)
         # Check the cache for any additional revisions to pull reports for
         revisions, completed_revisions = self.LoadCache()
-        if self.verbose:
-            log.debug("INCOMPLETE REVISIONS IN CACHE %s" % (revisions))
+        log.debug("INCOMPLETE REVISIONS IN CACHE %s" % (revisions))
         rev_report.update(revisions)
         # Clear out complete revisions from the rev_report keys
         for rev in completed_revisions:
@@ -617,30 +619,32 @@ class SchedulerDBPoller():
         for revision in rev_report.keys():
             buildrequests = self.scheduler_db.GetBuildRequests(
                     revision, self.branch)
-            rev_report[revision]['bugs'] = self.get_bug_numbers(buildrequests)
-            rev_report[revision]['push_type'] = self.process_push_type(
-                    revision, buildrequests)
+            rev_report[revision]['bugs'] = self.GetBugNumbers(buildrequests)
+            rev_report[revision]['push_type'], max_orange = \
+                    self.ProcessPushType(revision, buildrequests)
             (rev_report[revision]['status'],
              rev_report[revision]['is_complete']) = \
-                     self.calculate_build_request_status(buildrequests,
-                                                         revision)
+                     self.CalculateBuildRequestStatus(buildrequests,
+                             revision,
+                             retry_oranges=(rev_report[revision]['push_type'] == "RETRY"),
+                             max_orange=max_orange)
 
             # For completed runs, generate a bug comment message if necessary
             if rev_report[revision]['is_complete'] and \
                     len(rev_report[revision]['bugs']) > 0:
                 rev_report[revision]['results'] = \
-                        self.calculate_results(buildrequests)
+                        self.CalculateResults(buildrequests)
                 rev_report[revision]['message'] = \
-                        self.generate_result_report_message(revision,
+                        self.GenerateResultReportMessage(revision,
                                 rev_report[revision]['results'],
-                                self.get_single_author(buildrequests))
+                                self.GetSingleAuthor(buildrequests))
             else:
                 rev_report[revision]['message'] = None
 
         # Process the completed rev_report for this run
         # gather incomplete revisions and writing to cache
         incomplete = {}
-        for revision,info in rev_report.items():
+        for revision, info in rev_report.items():
             # Incomplete builds that have bugs
             # get added to dict for re-checking later
             if not info['is_complete']:
@@ -758,26 +762,27 @@ if __name__ == '__main__':
                               timeout=1)
 
         # set up logging
-        log.setLevel(logging.INFO)
         if not options.log_file:
             # log to stdout
             handler = logging.StreamHandler()
         else:
             handler = logging.handlers.RotatingFileHandler(options.log_file,
                             maxBytes=50000, backupCount=5)
+        if not options.verbose:
+            log.setLevel(logging.INFO)
+        else:
+            log.setLevel(logging.DEBUG)
         log.addHandler(handler)
 
 
         if options.revision:
             poller = SchedulerDBPoller(branch=options.branch,
-                    cache_dir=options.cache_dir, config=options.config,
+                    cache_dir=options.cache_dir, configs=options.configs,
                     dry_run=options.dry_run, verbose=options.verbose)
             result = poller.PollByRevision(options.revision, options.flag_check)
-            if options.verbose:
-                log.setLevel(logging.DEBUG)
-                log.debug("Single revision run complete: "
-                        "RESULTS: %s POSTED_TO_BUG: %s"
-                        % (result, result['posted_to_bug']))
+            log.debug("Single revision run complete: "
+                      "RESULTS: %s POSTED_TO_BUG: %s"
+                    % (result, result['posted_to_bug']))
         else:
             if options.starttime > time():
                 log.debug("Starttime %s must be earlier than the "

@@ -622,6 +622,9 @@ class BuildRequest(object):
 
         return MISC                       # what's going on?
 
+    def __str__(self):
+        return str(self.to_dict())
+
     def add_comments(self, comments):
         self.comments.add(comments)
 
