@@ -59,6 +59,7 @@ class RetryException(Exception):
     Used to trigger a retry when using retriable functions.
     """
     pass
+
 class FailException(Exception):
     """
     Used to fail immediately without retry when using retriable functions.
@@ -67,7 +68,7 @@ class FailException(Exception):
 
 class RepoCleanup(object):
     """
-    Used for cleaning up the active/clean repositories for
+    Used for cleaning up the active repository for
     the specified branch.
     """
     def __init__(self, branch, url):
@@ -76,11 +77,7 @@ class RepoCleanup(object):
         self.url = url
 
     def __call__(self):
-        self.i += 1
-        if self.i == 2:
-            self.hard_clean()
-        else:
-            self.soft_clean()
+        self.soft_clean()
 
     def soft_clean(self):
         """
@@ -96,19 +93,6 @@ class RepoCleanup(object):
 
         log.debug('Update -C on active repo for: %s' % (self.branch))
         update(active_repo)
-
-    def hard_clean(self):
-        """
-        Deletes the clean and active repositories & re-clones.
-        """
-        clear_branch(self.branch)
-        log.debug('Wiped repositories for: %s' % (self.branch))
-        try:
-            cloned_revision = clone_branch(self.branch, self.url)
-        except RetryException:
-            log.error('[HgPusher] Clone error while cleaning')
-            # XXX: do something....
-
 
 class Patch(object):
     def __init__(self, patch):
@@ -507,10 +491,10 @@ def clone_branch(branch, branch_url):
     remote = branch_url
     # Set up the clean repository if it doesn't exist,
     # otherwise, it will be updated.
-    clean = os.path.join('clean')
-    clean_repo = os.path.join(clean, branch)
-    if not os.path.isdir(clean):
-        os.mkdir(clean)
+    clean_path = os.path.join(config['work_dir'], 'clean')
+    clean_repo = os.path.join(clean_path, branch)
+    if not os.path.isdir(clean_path):
+        os.mkdir(clean_path)
     try:
         mercurial(remote, clean_repo, update_dest=False)
     except subprocess.CalledProcessError, err:
@@ -536,19 +520,6 @@ def clone_branch(branch, branch_url):
         return None
 
     return revision
-
-def clear_branch(branch):
-    """
-    Clear the directories for the given branch,
-    effictively removing any changes as well as clearing out the clean repo.
-    """
-    clean_repo = os.path.join('clean', branch)
-    active_repo = os.path.join('active', branch)
-    try:
-        shutil.rmtree(clean_repo)
-        shutil.rmtree(active_repo)
-    except:
-        pass
 
 def valid_dictionary_structure(dict_, elements):
     """
@@ -670,6 +641,7 @@ def main():
                 exit(0)
 
     try:
+        config['work_dir'] = os.path.abspath(config['work_dir'])
         if not os.path.isdir(config['work_dir']):
             os.makedirs(config['work_dir'])
         os.chdir(config['work_dir'])
