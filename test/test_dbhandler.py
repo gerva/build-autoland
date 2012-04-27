@@ -191,6 +191,28 @@ class TestAutolandDbHandler(unittest.TestCase):
         revs = self.db.PatchSetGetRevs()
         self.assertEqual([], revs)
 
+    def testPatchSetComplete(self):
+        ps1 = PatchSet(bug_id=12345, patches='55555', branch='moz-cent',
+                revision='ps1')
+        ps1.id = self.db.PatchSetInsert(ps1)
+
+        ps2 = self.db.PatchSetQuery(ps1)[0]
+        ps2.id = -1
+        ps2.id = self.db.PatchSetComplete(ps1)
+
+        self.assertTrue(ps2.id != -1)
+
+        ps3 = self.db.PatchSetQuery(ps1)
+        self.assertTrue(ps3 == None)
+
+        ps1.revision = "Status"
+        ps1.id = self.db.PatchSetInsert(ps1)
+
+        ps2 = self.db.PatchSetQuery(ps1)[0]
+        ps2.id = -1
+        ps2.id = self.db.PatchSetComplete(ps1, status="Finished")
+        self.assertTrue(ps2.id != -1)
+
     def testBranchRunningJobsQuery(self):
         ps1 = PatchSet(bug_id=12577, patches='534442', branch='try',
             try_run=1, try_syntax=None, push_time=datetime.datetime.utcnow(), author='lsblakk@mozilla.com')

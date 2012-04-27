@@ -316,6 +316,36 @@ class DBHandler(object):
         connection = self.engine.connect()
         connection.execute(q)
 
+    def PatchSetComplete(self, patch_set, status=None):
+        """
+        Patch set is complete, so move it to the completed table.
+        """
+        p = self.scheduler_db_meta.tables['patch_sets']
+        c = self.scheduler_db_meta.tables['complete']
+        ps = self.PatchSetQuery(patch_set)
+        if not ps:
+            return -1
+        ps = ps[0]
+        q = p.delete(p.c.id == patch_set.id)
+        connection = self.engine.connect()
+        connection.execute(q)
+        ps.completion_time = datetime.datetime.utcnow()
+        ps.id = None
+        complete_ps = ps
+        q = c.insert(ps)
+        connection = self.engine.connect()
+        result = connection.execute(q)
+        p_key = result.inserted_primary_key[0]
+        if status:
+            q = '''
+                UPDATE complete
+                SET status="%s"
+                WHERE id = %s
+            ''' % (status, p_key)
+                    #c.c.id == p_key)
+            result = connection.execute(q)
+        return p_key
+
     def PatchSetGetNext(self, branch='%', status='enabled'):
         """
         Get the next patch_set that is queued up for a push,

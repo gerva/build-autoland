@@ -573,7 +573,7 @@ def message_handler(message):
                 db.PatchSetUpdate(patch_set)
             else:
                 # close it!
-                db.PatchSetDelete(patch_set)
+                db.PatchSetComplete(patch_set, status="SUCCESS: Try run complete")
                 log.debug('Deleting patchset %s' % (patch_set.id))
                 return
 
@@ -582,7 +582,9 @@ def message_handler(message):
             patch_set = db.PatchSetQuery(PatchSet(ps_id=msg['patchsetid']))[0]
             # XXX: If eventually able to land without try push, this may
             #      need to update the extension.
-            db.PatchSetDelete(patch_set)
+            patch_set.revision = msg.get('revision')
+            db.PatchSetComplete(patch_set,
+                    status="SUCCESS: Pushed to branch.")
             log.debug('Successful push to branch of patchset %s.'
                     % (patch_set.id))
     elif msg['type'] == 'TIMED_OUT':
@@ -596,12 +598,12 @@ def message_handler(message):
             patch_set = patch_set[0]
         if patch_set:
             # remove it from the queue, timeout should have been comented
-            db.PatchSetDelete(patch_set)
+            db.PatchSetComplete(patch_set, status="Try run timed out.")
             log.debug('Received time out on %s, deleting patchset %s'
                     % (msg['action'], patch_set.id))
     elif msg['type'] == 'ERROR' or msg['type'] == 'FAILURE':
         patch_set = None
-        if msg['action'] == 'TRY.RUN' or msg['action'] == 'BRANCH.RUN':
+        if msg['action'] == 'TRY.RUN' or msg['action'] == 'BRANCH.PUSH':
             patch_set = db.PatchSetQuery(PatchSet(revision=msg['revision']))
             if not patch_set:
                 log.error('No corresponding patchset found for revision %s'
@@ -619,7 +621,7 @@ def message_handler(message):
 
         if patch_set:
             # remove it from the queue, error should have been comented to bug
-            db.PatchSetDelete(patch_set)
+            db.PatchSetComplete(patch_set, status="FAILURE:An error occurred.")
             log.debug('Received error on %s, deleting patchset %s'
                     % (msg['action'], patch_set.id))
             for patch in patch_set.patchList():
@@ -675,7 +677,7 @@ def handle_patchset(mq, patchset):
         # Comment already posted in get_patches. Full patchset couldn't be
         # processed.
         log.info("Patchset not valid. Deleting from database.")
-        db.PatchSetDelete(patchset)
+        db.PatchSetComplete(patchset, status="FAILUE: Invalid Patch Set")
         return
 
     # get branch information
@@ -684,7 +686,7 @@ def handle_patchset(mq, patchset):
         # error, branch non-existent
         # XXX -- Should we email or otherwise let user know?
         log.error('Could not find %s in branches table.' % (patchset.branch))
-        db.PatchSetDelete(patchset)
+        db.PatchSetComplete(patchset, status="FAILURE: Branch is not supported.")
         return
 
     try:
@@ -713,7 +715,7 @@ def handle_patchset(mq, patchset):
                 comment = 'Autoland Failure:\n' \
                           'Invalid review for patch(es): %s' \
                                 % (' '.join(r_status[1]))
-            db.PatchSetDelete(patchset)
+            db.PatchSetComplete(patchset, status=comment)
             post_comment(comment, patchset.bug_id)
             return
     if branch.approval_required:
@@ -734,7 +736,7 @@ def handle_patchset(mq, patchset):
                 comment = 'Autoland Failure:\n' \
                           'Invalid approval for patch(es): %s' \
                                 % (' '.join(a_status[1]))
-            db.PatchSetDelete(patchset)
+            db.PatchSetComplete(patchset, status=comment)
             post_comment(comment, patchset.bug_id)
             return
 
