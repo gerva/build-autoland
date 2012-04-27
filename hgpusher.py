@@ -317,12 +317,15 @@ class Patchset(object):
         if self.try_run:
             # create a null commit with try syntax
             cmd = ['qnew', '-R', self.active_repo]
+            message = 'try: %s -n' % (try_syntax)
             if config.get('staging', False):
-                cmd.extend(['-m', 'try: %s -n bug %s'
-                    % (self.try_syntax, self.bug_id)])
+                message += ' bug %s' % (self.bug_id)
             else:
-                cmd.extend(['-m', 'try: %s -n --post-to-bugzilla bug %s'
-                        % (self.try_syntax, self.bug_id)])
+                message += ' --post-to-bugzilla bug %s' % (self.bug_id)
+            if self.to_branch:
+                message += ' --retry-oranges'
+            cmd.extend(['-m', message])
+
             if self.user:   # user only set if it's required.
                 cmd.extend(['-u', self.user])
             cmd.append('null')
