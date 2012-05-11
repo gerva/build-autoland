@@ -234,7 +234,7 @@ def bz_search_handler():
 
     for (bug_id, whiteboard) in bugs:
         tag = get_first_autoland_tag(whiteboard)
-        #log.debug('Bug %s with tag %s' % (bug_id, tag))
+        log.debug('Bug %s with tag %s' % (bug_id, tag))
 
         if tag == None or re.search('in-queue', tag) != None:
             # Strange that it showed up if None
@@ -242,24 +242,24 @@ def bz_search_handler():
 
         # get the branches
         branches = get_branch_from_tag(tag)
-        log.debug('Flagged for landing on branches: %s' % (branches))
+        log.debug('Bug %s: Flagged for landing on branches: %s' % (bug_id, branches))
         if not branches:
             # this was probably flagged [autoland], since it was picked up
             # and doesn't have a branch attached.
-            log.debug('No branches from tag %s' % (tag))
+            log.debug('Bug %s: No branches from tag %s' % (bug_id, tag))
             continue
         for branch in tuple(branches):
             # clean out any invalid branch names
             # job will still land to any correct branches
             if db.BranchQuery(Branch(name=branch)) == None:
                 branches.remove(branch)
-                log.error('Branch %s does not exist.' % (branch))
+                log.error('Bug %s: Branch %s does not exist.' % (bug_id, branch))
 
         # If there are no correct or permissive branches, go to next bug
         if not branches:
             continue
 
-        log.debug('Found and processing tag %s' % (tag))
+        log.debug('Bug %s: Found and processing tag %s' % (bug_id, tag))
         # get the explicitly listed patches, if any
         patch_group = get_patches_from_tag(tag) if not None else []
         if patch_group is None:
