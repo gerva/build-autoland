@@ -25,6 +25,7 @@ TIMEOUT = 43200 # 12 hours
 MAX_POLLING_INTERVAL = 172800 # 48 hours
 COMPLETION_THRESHOLD = 600 # 10 minutes
 MAX_ORANGE = 10
+LOCK_FILE_PATH = '/tmp.schedulerDbPoller.lock'
 
 # console logging, formatted
 logging.basicConfig(format=FORMAT)
@@ -758,8 +759,7 @@ if __name__ == '__main__':
 
     lock_file = None
     try:
-        lock_file = lock.lock(os.path.join('/tmp', '.schedulerDbPoller.lock'),
-                              timeout=1)
+        lock_file = lock.lock(LOCK_FILE_PATH timeout=1)
 
         # set up logging
         if not options.log_file:
@@ -811,7 +811,7 @@ if __name__ == '__main__':
     except error.LockHeld:
         print "There is an instance of SchedulerDbPoller running already."
         print "If you're sure that it isn't running, delete %s and try again."\
-                % (os.path.join(os.getcwd(), '.schedulerDbPoller.lock'))
+                % (LOCK_FILE_PATH)
         sys.exit(1)
     finally:
         if lock_file:
