@@ -28,11 +28,24 @@ class TestAutolandQueue(unittest.TestCase):
         tag = get_first_autoland_tag('[Autoland-try][Autoland-moz-central]')
         self.assertEqual(tag, '[autoland-try]')
         tag = get_first_autoland_tag('[Autoland]')
-        self.assertEqual(tag, '[autoland]')
+        self.assertEqual(tag, None)
         tag = get_first_autoland_tag('[autoland:-p linux -u none]')
-        self.assertEqual(tag, '[autoland:-p linux -u none]')
-        tag = get_first_autoland_tag('[autoland:35246:-p linux -u none]')
-        self.assertEqual(tag, '[autoland:35246:-p linux -u none]')
+        self.assertEqual(tag, None)
+        tag = get_first_autoland_tag('[autoland-branch:35246:-p linux -u none]')
+        self.assertEqual(tag, '[autoland-branch:35246:-p linux -u none]')
+        # spaced
+        tag = get_first_autoland_tag('[autoland-branch: 35246 : -p linux -u none]')
+        self.assertEqual(tag, '[autoland-branch: 35246 : -p linux -u none]')
+        tag = get_first_autoland_tag('[Another Tag][Autoland-try : 12345, 23456]')
+        self.assertEqual(tag, '[autoland-try : 12345, 23456]')
+        tag = get_first_autoland_tag('[autoland-branch : 35246 : -p linux -u none]')
+        self.assertEqual(tag, '[autoland-branch : 35246 : -p linux -u none]')
+        tag = get_first_autoland_tag('[autoland-branch : 3, 4, 5 : -p linux -u none]')
+        self.assertEqual(tag, '[autoland-branch : 3, 4, 5 : -p linux -u none]')
+        tag = get_first_autoland_tag('[autoland-branch : 3, 4, 5 : -p linux -u none ]')
+        self.assertEqual(tag, '[autoland-branch : 3, 4, 5 : -p linux -u none ]')
+        tag = get_first_autoland_tag('[ autoland-branch : 3, 4, 5 : -p linux -u none ]')
+        self.assertEqual(tag, '[ autoland-branch : 3, 4, 5 : -p linux -u none ]')
         # failures
         tag = get_first_autoland_tag('[autoland:32456:12345:-p linux]')
         self.assertEqual(tag, None)
@@ -55,7 +68,12 @@ class TestAutolandQueue(unittest.TestCase):
         self.assertEqual('123789',
                 get_patches_from_tag('[autoland: 123789:-p linux -u none]'))
         self.assertEqual('', get_patches_from_tag('[autoland:-t all]'))
+
         self.assertEqual('123', get_patches_from_tag('[autoland:-t all: 123]'))
+        self.assertEqual('123,321', get_patches_from_tag('[autoland:-t all: 123 , 321]'))
+        self.assertEqual('1,2,3', get_patches_from_tag('[autoland:1, 2, 3: -t all]'))
+        self.assertEqual('1,2,3', get_patches_from_tag('[autoland: 1, 2, 3 : -t all]'))
+        self.assertEqual('123', get_patches_from_tag('[autoland:-t all: 123 ]'))
 
     def testGetBranchFromTag(self):
         self.assertEqual(None, get_branch_from_tag('[autoland]'))
@@ -77,6 +95,15 @@ class TestAutolandQueue(unittest.TestCase):
         self.assertEqual(['m-c','m-i','try'],
                 get_branch_from_tag('[autoland-m-c,m-i,try]'))
 
+        self.assertEqual(['try'],
+                get_branch_from_tag('[autoland-try :1,2,3]'))
+        self.assertEqual(['m-c','m-i','try'],
+                get_branch_from_tag('[autoland-m-c, m-i, try]'))
+        self.assertEqual(['try'],
+                get_branch_from_tag('[ autoland-try :1,2,3]'))
+        self.assertEqual(['try'],
+                get_branch_from_tag('[ autoland-try :1,2,3 ]'))
+
     def testGetTrySyntaxFromTag(self):
         self.assertEqual('-p linux -u none',
                 get_try_syntax_from_tag('[autoland:-p linux -u none]'))
@@ -87,6 +114,15 @@ class TestAutolandQueue(unittest.TestCase):
         self.assertEqual('-p win32 -u mochitest-1,mochitest-2',
                 get_try_syntax_from_tag(
                    '[autoland-try:1,2,3:-p win32 -u mochitest-1,mochitest-2]'))
+
+        self.assertEqual(None,
+                get_try_syntax_from_tag('[autoland: 12345]'))
+        self.assertEqual('-p all -t all',
+                get_try_syntax_from_tag('[autoland-try: -p all -t all]'))
+        self.assertEqual('-p linux -u none',
+                get_try_syntax_from_tag('[autoland: -p linux -u none]'))
+        self.assertEqual('-p linux -u none',
+                get_try_syntax_from_tag('[autoland: -p linux -u none ]'))
 
     def testGetReviews(self):
         bug = open('test/bug1.json', 'r').read()
