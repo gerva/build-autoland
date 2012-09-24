@@ -300,18 +300,25 @@ class SchedulerDBPoller():
         if self.verbose:
             log.debug("REPORT: %s" % report)
 
+        tree = self.branch.title()
+        if 'comm' in self.branch:
+            tree = "Thunderbird-Try"
+
         message = """Try run for %s is complete.
 Detailed breakdown of the results available here:
     https://tbpl.mozilla.org/?tree=%s&rev=%s
-Results (out of %d total builds):\n""" % (revision, self.branch.title(), 
+Results (out of %d total builds):\n""" % (revision, tree,
                                             revision, report['total_builds'])
         for key, value in report.items():
             if value > 0 and key != 'total_builds':
                 message += "    %s: %d\n" % (key, value)
         if author:
+            app = 'firefox'
+            if 'comm' in self.branch:
+                app = 'thunderbird'
             message += "Builds (or logs if builds failed) available at:\n"\
-                        "http://ftp.mozilla.org/pub/mozilla.org/firefox/"\
-                        "try-builds/%s-%s""" % (author, revision)
+                        "http://ftp.mozilla.org/pub/mozilla.org/%s/"\
+                        "try-builds/%s-%s""" % (app, author, revision)
         return message
 
     def WriteToBuglist(self, revision, bug):
