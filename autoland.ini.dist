@@ -1,0 +1,32 @@
+[defaults]
+branch_api=http://hg.mozilla.org/repo-group?repo=/
+tree_status_api=https://treestatus.mozilla.org/
+
+[hg]
+username=autolanduser@mozilla.com
+ssh_username=autolanduser@mozilla.com
+ssh_key=~/.ssh/autolanduser@mozilla.com
+try_syntax=-b do -p all -u none -t none
+base_work_dir = /builds/autoland
+tree_closure_retry_interval = 600
+tree_closure_max_attempts = 120
+
+[bz]
+api_url=https://api-dev.bugzilla.mozilla.org/allizom/
+attachment_url=https://bugzilla-dev.allizom.org/attachment.cgi?id=
+url=https://bugzilla-dev.allizom.org/show_bug.cgi?id=
+username=autoland-try@mozilla.bugs
+password=
+webui_url=https://bugzilla-dev.allizom.org/jsonrpc.cgi
+webui_login=autoland-try@mozilla.bugs
+webui_password=
+ca_bundle=
+
+[ldap]
+bind_dn=
+password=
+host=
+port=389
+
+[db]
+engine_url=sqlite:///autoland.sqlite

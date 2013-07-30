@@ -1,0 +1,6 @@
+BROKER_URL = "amqp://guest:guest@localhost//"
+CELERY_RESULT_BACKEND = "database"
+CELERY_RESULT_DBURI = "sqlite:///celerystatus.db"
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACKS_LATE = True
